@@ -1,0 +1,110 @@
+/*
+单变量psi
+将单变量分析之后的变量导入SAS数据集作为配置文件
+*/
+options mlogic mprint;
+OPTION VALIDVARNAME=ANY;
+option compress = yes;
+/*将连续变量分段mapping到验证集上*/
+%macro test_psi(map=,data=);
+/*
+map:映射规则数据集
+data：需要映射的数据集
+*/
+/*设计连续变量列表*/
+data var_list;
+set &map. ;
+by name;
+keep name;
+if first.name then output;
+run;
+proc sql noprint;
+ select max(a) into:c from &map.;
+quit;
+%do i=1 %to &c.;
+ data null;
+   set  &map.;
+   if a=&i.;
+   call symputx("name",name);
+   call symputx("min",min_bin);
+   call symputx("max",max_bin);
+   call symputx("hb",hb);
+ run;
+ data &data.;
+   set &data.;
+   if &name.>=&min. and &name. < = &max. then I&name=&hb.;
+ run;
+%end;
+%mend;
+%macro psi_var(data1=,data2=,dsout=);
+/*
+data1 : 基准数据集
+data2 ：对比数据集
+dsout : 输出数据集
+*/
+%if %sysfunc(exist(&dsout.)) ^= 0 %then %do;
+proc datasets lib = work  nolist;
+delete psi_&data.;
+quit;
+%end
+proc sql noprint;
+select count(*),name into : c,:var_list separated by ' '  from var_list;
+quit;
+%put &c.;
+%put &var_list.;
+data &dsout.;
+  format name $50. psi 10.5;
+   if _n_=1 then delete;
+run;
+%let i = 1;
+%do %until (%scan(&var_list.,&i.,' ')= );
+ %let vari = %scan(&var_list,&i,' ');
+/*************************基准数据集*********************************/
+proc sql;
+ create table tmp_&data1. as select &vari.,count(*) as count
+ from  &data1.
+ group by &vari.;
+quit;
+proc sql noprint;
+ select count(*) into:sum_model from &data1.;
+quit;
+%put &sum_model.;
+data tmp1_&data1.;
+ set tmp_&data1.;
+ &vari._r=count/&sum_model.;
+run;
+/*******************************对比数据集****************************************************/
+proc sql;
+ create table tmp_&data2. as select &vari.,count(*) as count
+ from &data2.
+ group by &vari.;
+quit;
+proc sql noprint;
+ select count(*) into:sum_test from &data2.;
+quit;
+%put &sum_test.;
+data tmp_&data2.;
+ set tmp_&data2.;
+ &vari._t=count/&sum_test.;/*对比数据占比*/
+run;
+/**************************将两个数据集结合并计算psi*************************************/
+proc sql;
+ create table tmp_psi1 as select a.&vari., a.&vari._r,b.&vari._t
+ from  tmp_&data1. a
+ full join tmp_&data2. b
+ on a.&vari.=b.&vari.;
+quit;
+data tmp_psi2;
+ set tmp_psi1;
+ if &vari._r=. then &vari._r=0;
+ if &vari._t=. then &vari._t=0;
+ P&vari.=(&vari._r-&vari._t)*log(&vari._r/&vari._t);
+run;
+proc sql;
+ create table tmp_psi3  as select "&vari." as name, sum(P&vari.) as psi
+ from tmp_psi2;
+quit;
+proc append base=&dsout. data=tmp_psi3 force; run;
+%let i = %eval(&i.+1);
+%end;
+%mend;

@@ -1,0 +1,30 @@
+
+%macro zhuan(in = ,out = );
+%let rc = %sysfunc(open(&in.(keep = _char_)));
+%let cn = %sysfunc(attrn(&rc.,nvars));
+%let rc = %sysfunc(close(&rc.));
+
+data &out.;
+  set &in.(in = in) &in. end = last;
+
+  array allchar _char_;
+  array newchar newchar1 - newchar&cn.;
+  array temp temp1 - temp&cn.;
+  retain temp;
+
+  prx = prxparse('/[^\d\.\s\-]/');  /*sorry，还有负号漏了*/
+  if last then call execute('data &out.;set &out;');
+  do over allchar;
+    if in then temp = max(temp,prxmatch(prx,allchar));
+          else if ~temp then newchar = input(allchar,best.);
+        if last then do;
+      if ~temp then call execute(cat('drop ',vname(allchar),';rename ',vname(newchar),' = ',vname(allchar),';'));
+            else call execute(cat('drop ',vname(newchar),';'));
+        end;
+  end;
+  if last then call execute('run;');
+
+  if ~in;
+  drop temp: prx;
+run;
+%mend zhuan;

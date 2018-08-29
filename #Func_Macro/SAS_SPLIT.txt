@@ -1,0 +1,71 @@
+     决策树是日常建模中使用最普遍的模型之一，在SAS中，除了可以通过EM模块建立决策树模型外，还可以通过SAS代码实现。决策树模型在SAS系统中对应的过程为Proc split或Proc hpsplit，两者基本一样，后者效率更高，但在SAS help都查不到这两个过程步，本文参考相关资料主要介绍Proc split过程。其语法结构为：
+
+?Proc split options;
+
+Code options;
+
+Decision decdata options;
+
+Describe options;
+
+Freq variable;
+
+In|input variables/options;
+
+Priors probabilities;
+
+Prune node-identifier;
+
+Score options;
+
+Target variable;
+
+1）在proc split中，?data=指定分析数据集； outimportance=指定输出数据集，包括自变量的重要性；outleaf=指定输出数据集，包括各叶节点的统计指标；outmatrix=指定数据集，包括描述性统计指标；outseq=指定输出数据集，包括子树的统计指标；outtree=指定输出数据集，包括描述树的统计指标；leafsize=指定一个叶节点包含的最少观测数；maxbranch=指定一个节点的最大分枝数；maxdepth=指定最大的数深度；splitsize=指定一个节点分割的最小观测数；subtree=指定选择子树的方法。
+
+proc split data=other.train outimportance=test_1 outleaf=test_2 outmatrix=test_3 outseq=test_4 outtree=test_5;
+
+in arpu mou gprs;
+
+target liwang_flag;
+
+run;
+
+assess=指定模型评估方法，包括impurity、lift、profit、statistic。
+
+criterion=指定决策树分割标准，针对二分类变量和分类变量，Chisq表示pearson卡方，probchisq表示pearson卡方的p值，为默认，entropy表示信息增益，eratio表示信息增益率，gini表示通过gini系数分割；针对定距、定比变量，variance，probe表示F-test的p值，为默认，F表F统计量。其中，ID3算法使用信息增益作为属性分割标准，C4.5、C5.0算法使用信息增益率作为属性分割标准，CART算法使用gini系数作为属性分割标准，CHAID算法使用卡方和F检验作为属性分割标准。
+
+2）code生成data步代码，用来给观测计分，file=指定代码输出文件。
+
+3）decision。
+
+4）describe生成决策树规则的描述，file=指定描述输出文件。
+
+5）freq表示给自变量赋予频数。
+
+6）in或input指定自变量，可以申明多次，在“/”后的level=代表输入变量的类型，interval、ordinal、nominal，默认为interval，当自变量有多个类型时，可以申明多个input，然后后面用level指定变量类型。
+
+7）priors指训练集中目标类的先验概率，与decision互斥，proportional（pro）指各类在训练集中的占比，或直接列出各类占比，如priors‘0’=0.6‘1’=0.4。
+
+8）prune表示剪枝，与intree=和indmsplit=选项合用。
+
+9）score进行计分，data=指定输入数据集，out=指定输出数据集。
+
+10）target指定因变量，在“/”后，level=指定因变量类型，包括binary、nominal、ordinal、interval，默认为interval。
+
+Proc split data=other.train leafsize=50 maxbranch=3 maxdepth=6 assess=impurity criterion=chisq;
+
+Input arpu mou gprs/level=interval;
+
+Input product_flag/level=nominal;
+
+Target liwang_flag/level=binary;
+
+Code file='c:\users\edcba123\desktop\rule_1.txt';
+
+Describe file='c:\users\edcba123\desktop\rule_2.txt';
+
+Score data=other.train out=test;
+
+Priors proportional;
+
+Run;

@@ -1,0 +1,150 @@
+/*
+做评分卡模型时要做特征分析，小编一般都是等频分箱。但是做一些策略时，小编经常要找出极端好和极端坏的客户所在的特征分组，于是经常要用到最优分箱来进行特征分析，以下是代码：
+*/
+
+
+%macro num_iv(data=,dvar=,splitsize=,maxbranch=,nsurrs=,method=,maxdepth=,dir=);
+*
+1. splitsize : 指定一个节点分割的最小观测数
+2. maxbranch:指定一个节点的最大分枝数 
+3. nsurrs :指定替代规则数
+4. maxdepth:指定最大的数深度
+5. criteion:指定决策树分割标准
+6. assess:指定模型评估方法
+;
+
+proc datasets lib=work nodetails;
+ delete  varname_total;
+run;
+/*建立数值型建模变量数据集*/
+proc sql noprint ;
+ select distinct name into : var_analy separated by ' ' from woe_score;
+ select count(*) into : var_num  from woe_score;
+quit;
+%put &var_analy.;
+%let var_list = &var_analy.;
+%let var_num = &var_num.;  
+%put &var_list.;
+/*把数值型变量定义为宏变量*/
+%do i=1 %to &var_num.;   
+%let numvar_name_&i.= %scan(&var_list.,&i.);
+%put &numvar_name_1.;
+*
+1. splitsize : 指定一个节点分割的最小观测数
+2. maxbranch:指定一个节点的最大分枝数 
+3. nsurrs :指定替代规则数
+4. maxdepth:指定最大的数深度
+5. criteion:指定决策树分割标准
+6. assess:指定模型评估方法
+;
+proc split data=&data.  splitsize=&splitsize. maxbranch=&maxbranch. MAXDEPTH=&maxdepth.   nsurrs=&nsurrs.  assess=lift  criterion=&method.;
+ input &&numvar_name_&i./level=interval;
+ target &DVAR./level=binary;
+ Score data=&data. out=d_&i.; 
+ code file="&dir.\treecode_tic_&&numvar_name_&i..sas"; 
+ describe file="&dir.\treerule_tic_&&numvar_name_&i..txt";
+run; 
+
+data n_d_&i.; 
+ set d_&i.; 
+ %include "&dir.\treecode_tic_&&numvar_name_&i..sas"; 
+ rename p_&DVAR.1=p_&&numvar_name_&i.; 
+run;
+
+proc sql noprint;
+  select count(*),max(&&numvar_name_&i.),min(&&numvar_name_&i.)into:total, :max ,:min from n_D_&i.;
+quit;
+
+data n_D_&i.;
+ set n_D_&i.;
+ if &min.<=&&numvar_name_&i.<=&max.
+ then flag="no_null";
+ else flag="null";
+run;
+
+proc sql noprint;
+ select count(*) into:is_null from n_D_&i.;
+quit;
+%put &is_null.;
+%if &is_null.>0  %then  %do;
+/****************************************************************************************/
+proc sql noprint;
+ select count(*),max(&&numvar_name_&i.),min(&&numvar_name_&i.) into:total,:max ,:min from n_D_&i.;
+
+ select sum(case when default=1 then 1 else 0 end), sum(case when default=0 then 1 else
+ 0 end) into :tot_bad, :tot_good from  n_d_&i.;
+
+ create table total as  
+ select "&&numvar_name_&i." as varname,        
+ min(&&numvar_name_&i.) as interval_1,
+ max(&&numvar_name_&i.) as interval_2,             
+ compress(put(min(round(&&numvar_name_&i.,0.0001)),best32.))||'-'||compress(put(max(round(&&numvar_name_&i.,0.0001)),best32.)) as interval,
+ count(*) as total_num label = "账户数",
+ sum(&DVAR.) as bad_num label ="坏客户数",
+ input(compress(put(count(*)/ &total.,percent10.2),'%'),best32.) as cnt_pct label = %nrstr("%账户数占比") ,         
+ input(compress(put(sum(&DVAR.)/count(*),percent10.2),'%'),best32.) as bad_rate label = %nrstr("%坏账率"),
+ ((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)-(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good))
+ *log((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)/(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good)) as pre_iv
+ from n_D_&i.(where =(&&numvar_name_&i ^= .))
+ group by p_&&numvar_name_&i.
+ union /*得到两个数据集所有的数据，这里如果两个数据集有相同的数据，重复数据只出现一次 */
+ select "&&numvar_name_&i." as varname,
+ -9999 as interval_1,
+ -9999 as interval_2,
+ 'null' as interval,
+ count(*) as total_num label = "账户数",
+ sum(&DVAR.) as bad_num label ="坏客户数",
+ input(compress(put(count(*)/ &total.,percent10.2),'%'),best32.) as cnt_pct label = %nrstr("%账户数占比") ,         
+ input(compress(put(sum(&DVAR.)/count(*),percent10.2),'%'),best32.) as bad_rate label = %nrstr("%坏账率"),
+ ((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)-(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good))
+ *log((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)/(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good)) as pre_iv
+ from n_D_&i.(where=(&&numvar_name_&i.=.))
+ group by p_&&numvar_name_&i.
+ order by interval_1;
+quit;
+/*********************************************************************/
+%end;
+%else  %do;
+proc sql noprint;
+ select count(*),max(&&numvar_name_&i.),min(&&numvar_name_&i.)into:total,:max ,:min from n_D_&i.;
+
+ select sum(case when default=1 then 1 else 0 end), sum(case when default=0 then 1 else
+ 0 end) into :tot_bad, :tot_good from  n_d_&i.;
+
+ create table total as
+ select "&&numvar_name_&i." as varname,
+ min(&&numvar_name_&i.) as interval_1,
+ max(&&numvar_name_&i.) as interval_2,
+ compress(put(min(round(&&numvar_name_&i.,0.0001)),best32.))||'-'||compress(put(max(round(&&numvar_name_&i.,0.0001)),best32.)) as interval,
+ count(*) as total_num label = "账户数",
+ sum(&DVAR.) as bad_num label ="坏客户数",
+ input(compress(put(count(*)/ &total.,percent10.2),'%'),best32.) as cnt_pct label = %nrstr("%账户数占比") ,         
+ input(compress(put(sum(&DVAR.)/count(*),percent10.2),'%'),best32.) as bad_rate label = %nrstr("%坏账率"),
+ ((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)-(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good))
+ *log((sum(case when &DVAR.=1 then 1 else 0 end)/&tot_bad)/(sum(case when &DVAR.=0 then 1 else 0 end)/&tot_good)) as pre_iv
+ from n_D_&i.
+ group by p_&&numvar_name_&i.
+ order by interval_1;
+ quit;
+%end;
+data t_&i.;
+ length varname $100.;
+ set total;
+ group=_n_;
+run; 
+proc append base=varname_total data=t_&i. force;run;
+proc datasets lib=work nodetails noprint;
+ delete total n_: d_: _namedat;
+quit;
+%end;
+%mend;
+/*创建新文件夹*/
+data _null_;
+ new=dcreate("特征分析2","E:\AnalystPersonal\yuqing\决策树");
+ new1 = dcreate ("9wgini特征分析2","E:\AnalystPersonal\yuqing");
+ call symputx ("dir1",new1);
+ call symputx("dir",new);
+run;
+%put &dir.;
+%num_iv(data = work.all9w,dvar = default,splitsize = 1000,maxbranch= 2,nsurrs= 5,method =chisq ,maxdepth=5,dir = &dir.);
+dm "odsresults" clear;

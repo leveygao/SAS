@@ -1,0 +1,197 @@
+/*
+今天的文章的使用场景是，是因为我很热衷处理那种别人不喜欢整理的各种流水数据，例如运营商通话流水啊，银行卡流水啊，信用卡流水等等，那么这些数据做衍生变量有个经常会碰到的问题，就是像这种“最近一天的通话次数”有可能跟“最近三天的通话次数”这种相关性很强，但是在拟合的之后，这种相关性强的只能进一个，不然共线性就来找你啦，所以这时候你要处理是：1.你要让那个变量进去。2.那些变量是一类的，他们共线性在一起很强。
+
+你跟我说，这谁不会啊，这不就是vif嘛，一看我就知道那几个相关性高了，是的，我们经常会有vif,但是模型做多了，你会发现，vif无论要多方便，但是有时候vif过了，但是还是存在共线性，所以你这时候还是要去看相关矩阵。所以vif并不会万能，我今天也不是要说相关矩阵，我今天要说的是sas的一个过程步叫做“proc varclus”，看着是不是很像聚类的那个过程步，是这个这个是变量的聚类，将相关性强的变量聚在一起，这里我不展开细讲，我给你链接，你自己去
+
+看，我今天不是来介绍这个过程的，我是来给代码~~。
+
+链接在这里：http://blog.sina.com.cn/s/blog_5d3b177c0100equm.html
+https://wenku.baidu.com/view/7c4929f34693daef5ef73de1.html。
+
+这是思路
+
+代码主要实现其实就是对变量降维，而且是降维后，给你提取同类变量中那个最好的。代码的思路是这样子的：
+
+1. 输入一批数值变量，现在的代码只能实现数值变量的。我建议两百以内，你想要一千，我绝不拦你。
+2. 使用proc varclus过程将变量聚类，聚成几类，看你自己，我是大概变量总数除以20，假设是200个，那我最大的簇数，我就设置为10。几簇是最优的，这个怎么得到我还没研究出来。
+3.每一簇的变量都去跑一遍iv。（你要是觉得iv不太行，你可以自行改成其他衡量指标。）
+4.取出这一簇里面，iv最高的那个变量输出。
+5.我知道你会说，但是我想看下其他变量的怎么样，我也给你保留了！
+
+这是代码
+
+那么接下来我们就来贴代码！
+*/
+
+options mprint;
+%macro pub_clus(data,num, Maxclusters,id,y,group);
+
+proc datasets lib=work;
+delete clus_total;
+quit;
+
+data clus_total;
+length clus$30.;
+length varname1$30.;
+length max_iv 8.;
+run;
+    %let lib=%upcase(%scan(&data.,1,'.'));
+    %let dname=%upcase(%scan(&data.,2,'.'));
+    %global var_list var_num;
+    proc sql noprint;
+        select name into:name_list  SEPARATED by " "
+        from sashelp.VCOLUMN
+        where left(libname)="&lib." and left(memname)="&dname."  and lowcase(name)^=lowcase("&id.") and lowcase(name)^=lowcase("&y.") ;
+    quit;
+%put &name_list.;
+PROC VARCLUS  data=&data. Outstat=aa Outtree=qq Minclusters=2 Maxclusters=&Maxclusters.percent=0.75 Maxeigen=7 Trace  noprint;
+VAR &name_list.;
+;
+run;
+
+data ff2;
+set qq;
+where _NCL_=&num.;
+run;
+proc sort data=ff2 out=ff3 nodupkey;by _PARENT_;run;
+
+
+data _null_;
+set ff3;
+call symputx(compress("Clus"||_n_),compress(_PARENT_));
+call symputx(compress("n"),compress(_n_));
+run;
+%put &clus1.;
+
+%do j=1 %to &n.;
+
+data ff4;
+set ff2;
+where _PARENT_="&&clus&j.";
+run;
+
+proc datasets lib=work;
+delete total_result;
+quit;
+
+data total_result_&&clus&j. ;
+length varname$30.;
+length group_id 8.;
+length new_min 8.;
+length new_max 8.;
+length interval$30.;
+length group_num 8.;
+length bad_num 8.;
+length good_num 8.;
+length good_rate 8.;
+length bad_rate 8.;
+length woe 8.;
+length iv 8.;
+run;
+
+
+data _null_;
+set ff4;
+call symputx(compress("varname"||_n_),compress(_NAME_));
+call symputx(compress("n1"),compress(_n_));
+run;
+%put &varname1.;
+%do i=1 %to &n1.;
+%put &varname1.;
+      proc rank data=&data.(keep =&&varname&i. &y.) out = ff5 ties = low groups = &group.;
+    var &&varname&i.;
+      ranks new_var;
+      run;
+proc sql;
+create table result1 as 
+select distinct 
+"&&varname&i." as varname,
+new_var,
+min(&&varname&i.) as min,
+max(&&varname&i.) as max,
+case when new_var^=. then compress(put(min(&&varname&i.),8.)||"-"||put(max(&&varname&i.),8.)) else "null " end as interval,
+count(*) as group_num,
+sum(&y.) as bad_num,
+count(*)-sum(&y.) as good_num
+from ff5
+group by new_var;
+quit;
+
+proc sql;
+select count(*)into:good_total from ff5(where=(&y.=0));
+select count(*)into:bad_total from ff5(where=(&y.=1));
+create table result2 as 
+select 
+varname,
+case when new_var=. then 0 else new_var end as group_id,
+case when min=min(min) then -10000 else min end as new_min,
+case when max=max(max) then 100000 else max end as new_max,
+interval,group_num,bad_num,good_num,
+group_num/&good_total. as good_rate,
+bad_num/&bad_total. as bad_rate,
+log((bad_num/&bad_total.)/(group_num/&good_total.)) as woe,
+log((bad_num/&bad_total.)/(group_num/&good_total.))*((bad_num/&bad_total.)-(group_num/&good_total.)) as iv
+from result1 a;
+quit;
+
+proc append base=total_result_&&clus&j. data=result2 force;run;
+proc sql;
+create table iv_result_&&clus&j. as 
+select distinct varname, sum(iv) as iv from total_result_&&clus&j.(where=(varname^='')) group by varname;
+quit;
+%end;
+
+proc sql;
+create table iv_result_max as 
+select
+"&&clus&j." as clus,
+case when iv=max(iv) then varname else "" end as varname1,
+max(iv) as max_iv
+from (select distinct varname, sum(iv) as iv from total_result_&&clus&j.(where=(varname^='')) group by varname)
+having varname1^='';
+quit;
+proc append base=clus_total data=iv_result_max force;run;
+%end;
+%mend;
+%pub_clus(raw.MSG_MODULE,147, 7,uid,label,8);
+
+/*
+这是代码讲解
+
+pub_clus(data,num, Maxclusters,id,y,group);
+data:你的数据集
+num:你的表只保留主键，y值和变量，这个num填的是除掉y和主键剩下的变量数，假设你有149个变量，那么除掉主键和y值就剩下147，你就填147。
+Maxclusters：填的是你想最多变成多少簇。
+Id:主键
+Y：因变量
+Group:跑iv的时候你想分几组算iv。
+以上就是这个宏的参数填写，接下来我跟大家说下结果有哪些。
+
+
+
+结果：这个结果产出的全部数据集。主要看三张表：
+
+1.clus_total：
+
+
+
+保留的是每一簇中iv最高的那个变量以及他的iv值，不要羡慕我有这么多高iv的变量，你也会有的。哈哈哈哈哈哈
+
+2.iv_result_Clus13
+
+
+
+这张表保存的是第13簇的各个变量的iv，可以后续你觉得iv最高的那个变量你不喜欢，你就可以来这里找替代的。
+
+3.total_result_Clus10
+
+
+
+这张表保留的是算iv分组的区间以及每个区间的iv还有woe,以备觉得变量虚高iv的时候可以检查。我是不是很贴心！！！
+
+来源|屁屁的sas数据分析
+
+点击阅读原文，即可报名
+
+
+*/

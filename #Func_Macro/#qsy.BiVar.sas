@@ -1,0 +1,309 @@
+options ls=119 ps=68;
+options mprint;
+ OPTION SPOOL;
+
+
+
+%MACRO CHARFREQ(DATAIN, INDVAR);
+PROC SUMMARY DATA=&DATAIN NWAY MISSING ;
+  CLASS &INDVAR;
+  VAR N &NONRESP &RESPVAR ;
+  WEIGHT &WGTVAR;
+  OUTPUT OUT=TEMPCHAR (DROP=_TYPE_ _FREQ_) SUM=;
+RUN;
+
+DATA TEMPCHAR ;
+  SET TEMPCHAR ;
+  BADRATE = &NONRESP/N;
+RUN;
+
+PROC PRINT DATA=TEMPCHAR SPLIT='*' LABEL NOOBS ;
+     VAR &INDVAR  N  &NONRESP  &RESPVAR BADRATE ;
+     SUM N  &NONRESP &RESPVAR ;
+     FORMAT N &NONRESP &RESPVAR COMMA8.0
+            BADRATE PERCENT8.2
+            ;
+     LABEL &NONRESP="# &MYBAD*======"
+           &RESPVAR="# &MYGOOD*======"
+           N       ="# ACCTS*========"
+           BADRATE ="&MYBAD RATE*========="
+           ;
+     TITLE1 " ";
+     TITLE2 " ";
+     TITLE3 "FREQUENCY TABLE AND &MYBAD RATE FOR &INDVAR";
+     TITLE4 "                                           ";
+RUN;
+%MEND CHARFREQ ;
+
+
+%MACRO UNIV(DATAIN,VARIN);
+ ** COMPUTE MAXIMUM KS FOR THE INDEPENDENT VARIABLE VARIN ***;
+PROC SORT OUT=MTEMP
+     DATA=&DATAIN(KEEP=N &RESPVAR &NONRESP &VARIN &WGTVAR );
+     BY  &VARIN;
+RUN;
+
+PROC SUMMARY DATA=MTEMP(KEEP=&WGTVAR);
+     VAR &WGTVAR;
+     OUTPUT OUT=T1 SUM(&WGTVAR)=TOTWGT;
+RUN;
+
+DATA MTEMP;
+   IF _N_=1 THEN SET T1;
+   SET MTEMP;
+   BY &INDEPEND;
+   CUMN+&WGTVAR ;
+   RETAIN VALUE RANK;
+   IF &INDEPEND = . THEN RANK=-99; ELSE
+   IF FIRST.&INDEPEND THEN DO;
+      RANK = INT(&GROUPS*(CUMN-&WGTVAR) / TOTWGT) +1;
+      VALUE = &INDEPEND;
+   END;
+RUN;
+
+PROC SUMMARY DATA=MTEMP;
+     CLASS RANK;
+     VAR N &RESPVAR &NONRESP &VARIN;
+     WEIGHT &WGTVAR   ;
+     OUTPUT OUT=TOTS SUM(N &RESPVAR &NONRESP)=N &RESPVAR &NONRESP
+                     MIN(&VARIN)=STARTP MAX(&VARIN)=ENDP;
+RUN;
+
+DATA DOTOTS ;
+     SET TOTS (WHERE=(_TYPE_=0)) ;
+     SALL=N;
+     SBAD=&NONRESP ;
+     SGOD=&RESPVAR ;
+     TOTPCT=SGOD/SALL ;
+     KEEP SGOD SBAD SALL TOTPCT ;
+RUN;
+
+DATA DORPT ;
+     IF _N_=1 THEN SET DOTOTS ;
+     SET TOTS(WHERE=(_TYPE_=1)) END=FINAL;
+     PCRESP=&RESPVAR/N;
+
+     PCNRESP=&NONRESP/N;
+     LOGIT = LOG((1-PCNRESP)/PCNRESP);
+
+     TOTAL=N;
+	   PACCT=TOTAL/SALL;
+     CUMT+TOTAL ;
+     CUMR+&RESPVAR ;
+     CUMNR+&NONRESP ;
+     PTOTB=CUMNR/SBAD;
+     PTOTG=CUMR/SGOD;
+     PNRESP=&NONRESP/TOTAL ;
+     PTOT=CUMT/SALL ;
+     CUMRESP=CUMR/CUMT ;
+     CUMNRESP=CUMNR/CUMT;
+
+     RETAIN KSMAX 0;
+     IF RANK>0 THEN DO;
+        KS=ABS((PTOTB-PTOTG)) ;
+        KSMAX=MAX(KSMAX,KS);
+     END;
+
+     IF FINAL THEN
+       CALL SYMPUT('KSVALUE',PUT(KSMAX,PERCENT8.2));
+RUN;
+
+PROC PRINT DATA=DORPT SPLIT='*' LABEL NOOBS ;
+     VAR RANK STARTP ENDP LOGIT TOTAL PACCT &NONRESP &RESPVAR CUMT
+       PTOTB PTOTG
+       PCNRESP ;
+     SUM TOTAL &NONRESP &RESPVAR ;
+     FORMAT TOTAL &NONRESP &RESPVAR CUMT COMMA8.0
+              CUMR  COMMA5.0
+              CUMNR COMMA4.0
+              LOGIT COMMA6.3
+             PTOTG  KS PCNRESP PTOTB  PERCENT8.2
+            ;
+     LABEL RANK    ="*GROUP*====="
+           STARTP  ="&VARIN*FROM*========"
+           ENDP    ="&VARIN* TO *========"
+           LOGIT   ="LOGIT* ======"
+           TOTAL   ='# ACCTS*========'
+		   PACCT = '% ACCTS*========'
+           &RESPVAR = "# &MYGOOD*====="
+           &NONRESP = "# &MYBAD*====="
+           CUMNR   =" CUM.*&MYBAD *====="
+           CUMR    =" CUM.*&MYGOOD*====="
+           CUMT    =" CUM.*TOTAL*====="
+           PTOTB   ="CUM. %*&MYBAD *======="
+           PTOTG   ="CUM. %*&MYGOOD*======="
+           PCNRESP  ="INT.*&MYBAD RATE*========"
+           CUMNRESP ="CUM. *&MYBAD RATE*========"
+           ;
+
+TITLE1 " ";
+TITLE2 "BIVARIATE ANALYSIS ON";
+TITLE3 "                     ";
+TITLE4 "&INDEPEND";
+TITLE5 "         ";
+TITLE6 "MODEL TARGET: &DEPEND";
+TITLE7 "KS=&KSVALUE ";
+TITLE8 "            ";
+TITLE9  "NUMBER OF MISSINGS &MISSINGS =&TOTALM";
+TITLE10 " WITH THEIR &MYBAD RATE =&BADRATE";
+RUN;
+%MEND UNIV;
+
+
+%MACRO PERF(DATAIN, DEPEND, INDEPEND);
+PROC SORT OUT=MTEMP
+   DATA=&DATAIN (KEEP=N &DEPEND &RESPVAR &INDEPEND &WGTVAR);
+   BY &INDEPEND;
+RUN;
+
+DATA MISSDATA MTEMP;
+   SET MTEMP;
+   IF &INDEPEND eq . THEN OUTPUT MISSDATA;
+   ELSE OUTPUT MTEMP;
+RUN;
+
+PROC SUMMARY DATA=MISSDATA NWAY MISSING;
+   VAR N &DEPEND &RESPVAR &INDEPEND  ;
+   WEIGHT &WGTVAR ;
+   OUTPUT OUT=TOTSM
+          SUM(N &DEPEND &INDEPEND &RESPVAR)
+             =N &DEPEND &INDEPEND &RESPVAR
+          MEAN(&DEPEND )=BADRATE ;
+RUN;
+
+DATA _NULL_;
+  CALL SYMPUT("BADRATE", '0');
+  CALL SYMPUT("TOTALM", '0');
+RUN;
+
+%LET MISSINGS =  ;
+
+DATA _NULL_;
+   SET TOTSM END=FINAL;
+   IF FINAL THEN DO;
+     FORMAT TEMPVAR $12. ;
+     TEMPVAR = PUT(N, COMMA8.0);
+
+     CALL SYMPUT("BADRATE", LEFT(PUT(BADRATE, PERCENT8.2)));
+     CALL SYMPUT("TOTALM", TRIM(TEMPVAR));
+   END;
+RUN;
+
+%UNIV(MTEMP, &INDEPEND);
+
+PROC PLOT DATA=DORPT   HPERCENT=80 VPERCENT=80;
+   PLOT  LOGIT*STARTP='*';
+   TITLE1 " ";
+   TITLE2 " ";
+   TITLE3 "BIVARIATE ANALYSIS ON &INDEPEND";
+   TITLE4 "MODEL TARGET: &DEPEND";
+   TITLE5 "   ---LOGIT OVER &INDEPEND";
+   TITLE6 " ";
+   LABEL STARTP  ="&INDEPEND START POINT" ;
+RUN;
+%MEND PERF;
+
+
+%MACRO LL;
+	proc sql noprint;
+  	select name into :var_list separated by ' ' from varlist;
+    select count(name) into :n_var_lst from varlist;
+	quit;
+
+	DATA &DATAIN(KEEP=&RESPVAR &NONRESP &WGTVAR &var_list N);
+		SET &LIB..&DATAIN;
+	/*	IF SAMP=1 AND RESPOND IN (0,1); /*SAMP=1: DEV Sample; RESPOND IN (0,1): Good, Bad*/
+	  N=1;                      ***DO NOT REMOVE THIS LINE***;
+	RUN;
+
+  %do i=1 %to &n_var_lst;
+		data _null_;
+			pickit=&i;
+			set varlist point=pickit;
+			call symput('m_type',type);
+			call symput('m_name',name);
+			call symput('m_label',label);
+			stop;
+		run;
+
+		%if &m_type=1 %then %PERF(&DATAIN,&NONRESP,&m_name);
+		%else %CHARFREQ(&DATAIN,&m_name);
+
+	%end;
+%MEND;
+
+
+*********CHANGE THE FOLLOWING IF NECESSARY ***********************;
+%LET GROUPS=10;
+%LET RESPVAR = NGOOD;  **NGOOD NAD NBAD ARE IN INALL.FILE OR**;
+%LET NONRESP = NBAD;   **NEED TO CREATE IN THE NEXT DATA STEP**;
+%LET MYGOOD  = GOOD;   **GOOD OR RESPONSE ETC **;
+%LET MYBAD   = BAD;    **BAD OR NONRESPONSE OR ATTRITION ETC **;
+%LET WGTVAR  = NEWWGT;    **WEIGHT COULD BE OLD WEIGHT OR NEW WEIGHT**;
+
+
+%let keeplist=
+BL_RECORD_out
+BL_RECORD_out_Y
+BUILDING_AREA_LE50
+CARD_NUM
+CARD_SURPLUS_P
+COMPANY_ENTER_YER
+CUSTORM_NOW_TEL_TRUE
+GBIE
+GR_INCOME_NUM_AVG06M
+GR_MONTH_INCOME_AVG06M
+GR_MONTH_INCOME_MAX03M
+GR_MONTH_SALARY_AVG06M
+GR_MONTH_SALARY_MAX03M
+GR_MONTH_SALARY_TOT06M
+GR_MONTH_SURPLUS_AVG03M
+GR_MONTH_SURPLUS_MAX03M
+GR_MONTH_SURPLUS_TOT03M
+HOME_RESIDENT_TYPE_dwss
+IF_MALE
+LOAN_CAPITAL1_p
+LOAN_PURPOSE_app_E2
+LOAN_TYPE1_IN12
+MONTH_INCOME_out
+SD_APP_SEQ
+SD_C1_EDUCLS_IN12
+SD_C1_MARST_E3
+SIX_CHECK_NUM_out
+SIX_QUERY_NUM_out
+THREE_CHECK_NUM_out
+THREE_QUERY_NUM_out
+age
+card_open_YRS
+max_capital
+mean_capital
+sample
+
+
+
+
+;
+
+libname REX '.';
+%LET LIB=%str(REX);
+%LET DATAIN=%str(bt2);
+data REX.bt2;
+   set rex.bin_F;
+   where GBIE in ('G','B') AND sample='D';;
+   if GBIE='B' then NBAD=1;else NBAD=0;
+   NGOOD=1-NBAD;
+   NEWWGT=1;
+run;
+
+proc contents data= &LIB..&DATAIN(keep=&keeplist) out=varlist (keep=type name label) noprint;
+run;
+proc sort data=varlist;
+by name;
+run;
+
+ods listing close;
+ods html body='.\BINF35.html';
+%LL;
+
+ods html close;
+ods listing;

@@ -1,0 +1,22 @@
+%MACRO GET_PC_FILES_IN_FOLDER(DIRNAME,TYP)     ;/*参数有两个：路径，文件类型后缀*/
+    %PUT %STR(----------->DIRNAME=&DIRNAME)        ;
+    %PUT %STR(----------->TYP=&TYP)                ;
+    DATA WORK.DIRFILES                             ;     
+    RC=FILENAME("DIR","&DIRNAME")             ;/*把&DIRNAME值传给文件引用符“DIR"*/    
+    OPENFILE=DOPEN("DIR")                     ;/*得到路径标示符OPENFILE，DOPEN是打开directory的sas内置函数*/
+    IF OPENFILE>0 THEN DO                     ;/*如果OPENFILE>0表示正确打开路径*/        
+      NUMMEM=DNUM(OPENFILE)                   ;/*得到路径标示符OPENFILE中member的个数nummem*/        
+      DO II=1 TO NUMMEM                       ;           
+         NAME=DREAD(OPENFILE,II)              ;/*用DREAD依次读取每个文件的名字到NAME*/           
+         OUTPUT                               ;/*依次输出*/        
+      END                                     ;     
+    END                                       ;     
+    KEEP NAME                                 ;/*只保留NAME列*/
+ RUN                                          ;
+ PROC SORT                                    ;/*按照NAME排序*/     
+     BY DESCENDING NAME                       ;
+     %IF &TYP^=ALL %THEN %DO                  ;/*是否过滤特定的文件类型&TYP*/     
+       WHERE  INDEX(UPCASE(NAME),UPCASE(".&TYP"));/*Y,则通过检索NAME是否包含&TYP的方式过滤文件类型*/
+     %END                                           ;
+ RUN                                            ;
+ %MEND   GET_PC_FILES_IN_FOLDE;

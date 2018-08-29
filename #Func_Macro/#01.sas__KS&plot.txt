@@ -1,0 +1,91 @@
+/**data数据源，var排序变量，status分类变量，data1切分后的变量，Mks最大ks值,M分组组数**/
+%macro KS(data, var, status, data1, Mks,M);
+
+proc sort data=&data;
+by &var;
+run;
+
+proc sql noprint;
+ select sum(&status) into:P from &data;
+ select count(*) into :Ntot from &data;
+ quit;
+ %let N=%eval(&Ntot-&P); 
+
+data &data1;
+set &data nobs=NN;
+by &var;
+retain tile 1  totP  0 totN 0;
+Tile_size=ceil(NN/M);
+
+if &status=1 then totP=totP+&status;
+else totN=totN+1;
+
+Pper=totP/&P;
+Nper=totN/&N;
+
+if _N_ = Tile*Tile_Size then 
+  do;
+  output;
+   if Tile <M then  
+       do;
+         Tile=Tile+1;
+		 SumResp=0;
+	   end;
+  end;	
+keep Tile Pper Nper;
+run;
+
+
+data temp;
+	 Tile=0;
+	 Pper=0;
+	 NPer=0;
+run;
+
+Data &data1;
+  set temp &data1;
+run;
+
+ 
+
+data &data1;
+	set &data1;
+	Tile=Tile/M;
+	label Pper='Percent of Positives';
+	label NPer ='Percent of Negatives';
+	label Tile ='Percent of population';
+
+
+	KS=NPer-PPer;
+run;
+
+proc sql noprint;
+ select max(KS) into :&Mks from &data1;
+run; quit;
+
+
+proc datasets library=work nodetails nolist;
+ delete temp ;
+run;
+quit;
+
+%mend;
+
+
+
+%macro PlotKS(data1);
+
+
+ symbol1 value=dot color=red   interpol=join  height=1;
+ legend1 position=top;
+ symbol2 value=dot color=blue  interpol=join  height=1;
+ symbol3 value=dot color=green interpol=join  height=1;
+
+proc gplot data=&data1;
+
+  plot( NPer PPer KS)*Tile / overlay legend=legend1;
+ run;
+quit;
+ 
+	goptions reset=all;
+%mend;

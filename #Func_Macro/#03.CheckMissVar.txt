@@ -1,0 +1,196 @@
+%macro GetMissNum(SourceTable,TargetTable,InputVar);
+/**********************************************************************/
+/* 此宏的作用是统计原表中不同变量的缺失值数量。其中SourceTable是原始  */
+/* 表格，SourceTable是结果表格；TargetTable是结果表格；InputVar是原始 */
+/* 表格中的变量，可设多个变量，用空格分隔，也可如下设置：=Numeric表示 */
+/* 统计全部数值型变量，=Character表示统计全部字符型变量，=All表示统计 */
+/* 全部变量。                                                         */
+/*                                                                    */
+/* 最终结果表格中包含所有指定变量的名称、类型和相应的缺失值数量。     */
+/*                                                                    */
+/*                                      Created on 2012.9.6           */
+/*                                      Modified on 2012.10.16        */
+/**********************************************************************/
+
+/* 检查TargetTable的存在性 */
+%if &TargetTable EQ %STR() %then %do;
+        %put ERROR: The TargetTable should not be blank, please check it again.;
+        %goto exit;
+%end;
+
+/* 检查InputVar的合法性 */
+%if %UPCASE(&InputVar) NE NUMERIC AND %UPCASE(&InputVar) NE CHARACTER AND %UPCASE(&InputVar) NE ALL %then %do;
+        %ChkVar(SourceTable=&SourceTable,InputVar=&InputVar,FlagVarExists=GMN_FlagVarExists);
+
+        %if %SYSFUNC(FIND(&GMN_FlagVarExists,0)) NE 0 %then %do;
+                %put ERROR: The InputVar should be Numeric, Character, All or any variable name in SourceTable, case insensitive and without quotes.;
+                %goto exit;
+        %end;
+%end;
+
+%if %UPCASE(&InputVar) EQ NUMERIC %then %do;
+        proc means data=&SourceTable noprint;                /* proc means仅针对数值型变量 */
+                  output out=GMN_MissNumeric nmiss=;
+        run;
+
+        proc transpose data=GMN_MissNumeric out=&TargetTable name=VarName;
+                var _ALL_;
+        run;
+
+        data &TargetTable(rename=(COL1=MissNum));
+                set &TargetTable;
+                VarType='N';
+                if _N_>2;
+        run;
+%end;
+%else %if %UPCASE(&InputVar) EQ CHARACTER %then %do;
+        proc contents data=&SourceTable position out=GMN_VarList(keep=name type varnum) noprint; 
+        run;
+
+        /* 检查字符型变量是否存在 */
+        %ChkValue(SourceTable=GMN_VarList,
+                InputVar=type,
+                Value=2,
+                FlagValueExists=GMN_FlagCharVarExists);
+
+        %if &GMN_FlagCharVarExists GT 0 %then %do;
+                proc sql noprint;
+                        select compress(name)||'_0' into :GMN_VarNameChar separated by ' '
+                                from GMN_VarList where type=2 order by varnum;
+                quit;
+
+                data GMN_VarListChar(drop=_CHARACTER_ i);
+                        set &SourceTable(keep=_CHARACTER_);
+                        array mychar(*) $ _CHARACTER_;
+                        array mynum(*) &GMN_VarNameChar;
+                        do i=1 to dim(mychar);
+                            if  mychar(i) ="" then mynum{i}=.;
+                                else mynum(i)=1;
+                        end;
+                run;
+
+                proc means data=GMN_VarListChar noprint;
+                          output out=GMN_MissChar nmiss=;
+                run;
+
+                proc transpose data=GMN_MissChar out=&TargetTable name=VarName;
+                        var _ALL_;
+                run;
+
+                data &TargetTable(rename=(COL1=MissNum));
+                        set &TargetTable;
+                        VarType='C';
+                        if SUBSTR(VarName,LENGTH(VarName)-1,2) EQ '_0' then VarName=SUBSTR(VarName,1,LENGTH(VarName)-2);
+                        if _N_>2;
+                run;
+        %end;
+        %else %do;
+                %put ERROR: There is no character variable existed in SourceTable, please check it again.;
+                %goto exit;
+        %end;
+%end;
+%else %do;
+        proc means data=&SourceTable noprint;                /* proc means仅针对数值型变量 */
+                  output out=GMN_MissNumeric nmiss=;
+        run;
+
+        proc transpose data=GMN_MissNumeric out=GMN_MissNumeric name=VarName;
+                var _ALL_;
+        run;
+
+        data GMN_MissNumeric;
+                set GMN_MissNumeric;
+                VarType='N';
+        run;
+
+        proc contents data=&SourceTable position out=GMN_VarList(keep=name type varnum) noprint; 
+        run;
+
+        /* 检查字符型变量是否存在 */
+        %ChkValue(SourceTable=GMN_VarList,
+                InputVar=type,
+                Value=2,
+                FlagValueExists=GMN_FlagCharVarExists);
+
+        %if &GMN_FlagCharVarExists GT 0 %then %do;
+                proc sql noprint;
+                        select compress(name)||'_0' into :GMN_VarNameChar separated by ' '
+                                from GMN_VarList where type=2 order by varnum;
+                quit;
+
+                data GMN_VarListChar(drop=_CHARACTER_ i);
+                        set &SourceTable(keep=_CHARACTER_);
+                        array mychar(*) $ _CHARACTER_;
+                        array mynum(*) &GMN_VarNameChar;
+                        do i=1 to dim(mychar);
+                            if  mychar(i) ="" then mynum{i}=.;
+                                else mynum(i)=1;
+                        end;
+                run;
+
+                proc means data=GMN_VarListChar noprint;
+                          output out=GMN_MissChar nmiss=;
+                run;
+
+                proc transpose data=GMN_MissChar out=GMN_MissChar name=VarName;
+                        var _ALL_;
+                run;
+
+                data GMN_MissChar;
+                        set GMN_MissChar;
+                        VarType='C';
+                        if SUBSTR(VarName,LENGTH(VarName)-1,2) EQ '_0' then VarName=SUBSTR(VarName,1,LENGTH(VarName)-2);
+                run;
+
+                data GMN_MissNum;
+                        length VarName $32;
+                        set GMN_MissNumeric GMN_MissChar;
+                run;
+        %end;
+        %else %do;
+                data GMN_MissNum;
+                        set GMN_MissNumeric;
+                run;
+        %end;
+
+        proc sql noprint;
+                create table &TargetTable as
+                        select GMN_VarList.Name as VarName,GMN_MissNum.COL1 as MissNum,GMN_MissNum.VarType
+                                from GMN_VarList left join GMN_MissNum
+                                on GMN_VarList.Name EQ GMN_MissNum.VarName
+                                order by GMN_VarList.VarNum;
+        quit;
+
+        /* 若InputVar=All，则就此完结，否则还需要进行如下的步骤 */
+        %if %UPCASE(&InputVar) NE ALL %then %do;
+                %let InputVar_Comma=%PrxChange(InputString=&InputVar,PrxString=s/(\w+)/'$1'/);                /* 给InputVar中的代码加引号 */
+                %let InputVar_Comma=%SYSFUNC(TRANSLATE(&InputVar_Comma,%STR(,),%STR( )));                /* 替换InputVar中的空格为逗号 */
+
+                proc sql noprint;
+                        create table &TargetTable as
+                                select GMN_VarList.Name as VarName,GMN_MissNum.COL1 as MissNum,GMN_MissNum.VarType
+                                        from GMN_VarList inner join GMN_MissNum
+                                        on GMN_VarList.Name=GMN_MissNum.VarName and
+                                                GMN_VarList.Name in (&InputVar_Comma)
+                                        order by GMN_VarList.VarNum;
+                quit;
+        %end;
+%end;
+
+/* 删除不必要的表格 */
+proc datasets lib=work nolist;
+        delete GMN_:;
+quit;
+
+%exit:
+%mend;
+
+
+%macro Demo();
+
+%let SourceTable=GLOLD_TradeDate;
+%let TargetTable=AAA;
+%let InputVar=CHARACTER;                /* =Numeric表示统计全部数值型变量，=Character表示统计全部字符型变量，=All表示统计全部变量，大小写不敏感 */
+%GetMissNum(&SourceTable,&TargetTable,&InputVar);
+
+%mend;

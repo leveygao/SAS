@@ -1,0 +1,330 @@
+工作非常有帮助，只需输入一个数据集，数据集的每一个变量的缺失情况，0值情况，
+排序后按groups个数百分比占比分析等等，简单实用，去掉工作中的重复劳动，
+其中sasin=是输入数据集，其他为空则分析全部变量，好用请点赞哦！
+
+
+%MACRO CROSSTAB(SASIN=,VARLIST=,ADDVAR=,DROPLIST=,TARGET=,GROUPS=10,
+                PRTORDER=PVALUE,RISKTITL=1 -- HIGH RISK);
+
+  /*------------------------------------------------------------------
+    THIS MACRO DIVIDES EACH VARIABLE IN THE 'VARLIST' INTO
+    DECILES, COMPUTE THE 'TARGET' RATES (EG. RESPONSE RATE, BAD RATE,
+    ETC.) IN EACH DECILE, AND MEAN OF ALL 'ADDVAR' VARIABLES
+
+    PRTORDER: TAKES VALUE OF 'PVALUE' OR 'VARIABLE', IT DETERMINES THE
+              PRINT ORDER: BY P-VALUE OR ALPHABETIC ORDER OF VARIABLE NAMES
+    DROPLIST: OVERRIDES VARLIST
+  -------------------------------------------------------------------*/
+
+OPTIONS NOCENTER PS=120 PAGENO=1;
+
+* DM 'LOG'    CLEAR;
+* DM 'OUTPUT' CLEAR;
+
+  %IF &TARGET= %THEN %DO;
+    %LET TARGET=DUMMYZZZ;
+  %END;
+
+
+  DATA SASINZZZ;
+    SET &SASIN;
+    %IF &TARGET=DUMMYZZZ %THEN %DO;
+      &TARGET=1;
+    %END;
+    %IF &DROPLIST NE %THEN %DO;
+      DROP &DROPLIST;
+    %END;
+    %ELSE %IF &VARLIST NE %THEN %DO;
+      KEEP &VARLIST &TARGET &ADDVAR;
+    %END;
+    RUN;
+
+
+  PROC CONTENTS DATA=SASINZZZ (DROP=&TARGET &ADDVAR)
+    OUT=DTCONTS (KEEP=NAME LABEL TYPE) NOPRINT;
+    RUN;
+
+  DATA DTCONTS;
+    SET DTCONTS;
+    NAME=UPCASE(NAME);
+    RUN;
+
+  PROC SORT DATA=DTCONTS; 
+    BY NAME;
+    RUN;
+
+  DATA DTCONTS;
+    SET DTCONTS;
+    RANK='RK' || LEFT(_N_);
+    RUN;
+
+
+  DATA _NULL_;
+    SET DTCONTS END=FINAL;
+    I+1;
+    CALL SYMPUT('VAR_A'||LEFT(I),TRIM(NAME));
+    IF TYPE=1 THEN CALL SYMPUT('RK_A'||LEFT(I),TRIM(RANK));
+    ELSE           CALL SYMPUT('RK_A'||LEFT(I),TRIM(NAME));
+    CALL SYMPUT('LBL'|| LEFT(I),TRIM(LABEL));
+    CALL SYMPUT('TYPE'||LEFT(I),TYPE);
+    IF FINAL THEN CALL SYMPUT('N_TZ',LEFT(I));
+    RUN;
+
+
+  %DO I=1 %TO &N_TZ;
+    %LET SASMEAN=SASINZZZ;
+    %IF &&TYPE&I=1 %THEN %DO;
+      %LET SASMEAN=SASINTMP;
+      PROC RANK DATA=SASINZZZ (KEEP=&&VAR_A&I &TARGET &ADDVAR)
+                OUT=SASINTMP GROUPS=&GROUPS;
+        VAR &&VAR_A&I;
+        RANKS RANKTMP;
+        RUN;
+
+
+      DATA SASINTMP;
+        SET SASINTMP;
+        &&RK_A&I=PUT(RANKTMP,2.);
+        DROP RANKTMP;
+        RUN;
+    %END;
+
+
+    PROC MEANS DATA=&SASMEAN (KEEP=&&VAR_A&I &TARGET &&RK_A&I &ADDVAR)
+               MISSING NOPRINT;
+      CLASS &&RK_A&I;
+      %IF &&TYPE&I = 1 %THEN %DO;
+        VAR &&VAR_A&I &TARGET &ADDVAR;
+        OUTPUT OUT=MEANOZZZ MEAN(&TARGET &ADDVAR)=
+                            MEAN(&&VAR_A&I)=MEAN_
+                            MIN(&&VAR_A&I)=MIN_
+                            MAX(&&VAR_A&I)=MAX_;
+
+      %END;
+      %ELSE %DO;
+        VAR &TARGET &ADDVAR;
+        OUTPUT OUT=MEANOZZZ MEAN=;
+      %END;
+      RUN;
+
+
+    *** CALCULATE P-VALUE FOR ROW AND COLUMN INDEPENDENCE;
+
+    %LET DOCHISQ=Y;
+    DATA _NULL_;
+      SET MEANOZZZ END=FINAL;
+      IF _TYPE_=0 AND (&TARGET=0 OR &TARGET=1) THEN
+        CALL SYMPUT('DOCHISQ','N');
+      IF FINAL AND _N_=2 THEN
+        CALL SYMPUT('DOCHISQ','N');
+      RUN;
+
+
+    DATA CHISQA;
+      SET MEANOZZZ;
+      IF _TYPE_>0;
+      GROUPZ='A';
+      WGT=ROUND(_FREQ_*&TARGET,1);
+      RUN;
+
+
+
+    DATA CHISQB;
+      SET MEANOZZZ;
+      IF _TYPE_>0;
+      GROUPZ='B';
+      WGT=_FREQ_-ROUND(_FREQ_*&TARGET,1);
+      RUN;
+
+
+    DATA CHISQ;
+      SET CHISQA CHISQB;
+      KEEP &&RK_A&I GROUPZ WGT;
+      RUN;
+
+    %IF &DOCHISQ=N %THEN %DO;
+      DATA FREQOUT;
+        LENGTH VARNAME 15; 
+        _PCHI_=0; 
+        P_PCHI=1; 
+        VARNAME="&&VAR_A&I"; 
+        RUN; 
+ 
+    %END; 
+    %ELSE %DO; 
+      PROC FREQ DATA=CHISQ NOPRINT; 
+        WEIGHT WGT; 
+        TABLES &&RK_A&I*GROUPZ/CHISQ MISSING; 
+        OUTPUT OUT=FREQOUT (KEEP=_PCHI_ P_PCHI) PCHI; 
+        RUN; 
+ 
+      DATA FREQOUT; 
+        LENGTH VARNAME15;         _PCHI_=0;         P_PCHI=1;         VARNAME="&&VAR_A&I";         RUN;      %END;
+
+     %ELSE %DO;       
+
+PROC FREQ DATA=CHISQ NOPRINT;         WEIGHT WGT;         TABLES &&RK_A&I*GROUPZ/CHISQ MISSING;         
+OUTPUT OUT=FREQOUT (KEEP=_PCHI_ P_PCHI) PCHI;         RUN;        
+
+DATA FREQOUT;         LENGTH VARNAME15;
+        SET FREQOUT;
+        VARNAME="&&VAR_A&I";
+        RUN;
+    %END;
+
+
+    PROC APPEND BASE=PVALUE DATA=FREQOUT;
+    RUN;
+
+    **** CREATE PRINT OUT FILES;
+
+    DATA MEANOZZZ;
+      SET MEANOZZZ;
+      RETAIN TOTAL AVGODDS;
+
+
+      IF &TARGET=1 THEN ODDS=0;
+      ELSE ODDS=&TARGET/(1 - &TARGET);
+      IF _TYPE_=0 THEN DO;
+        TOTAL=_FREQ_;
+        AVGODDS=ODDS;
+      END;
+      IF _TYPE_=1 AND &&RK_A&I=' ' THEN &&RK_A&I='-1';
+
+
+      FREQPCT=_FREQ_/TOTAL*100;
+      &TARGET=&TARGET*100;
+      IF AVGODDS=0 THEN STDODDS=0; ELSE STDODDS=ODDS/AVGODDS;
+      RUN;
+
+    PROC SORT DATA=MEANOZZZ OUT=MEANO&I;
+      BY DESCENDING _TYPE_;
+      RUN;
+
+
+    %IF %EVAL(&I/50)*50 = &I %THEN %DO; 
+      OPTIONS NOTES;
+      PROC DATASETS;
+        DELETE SASINTMP MEANOZZZ CHISQA CHISQB CHISQ FREQOUT;
+        QUIT;
+    %END;
+    %ELSE %DO;
+      OPTIONS NONOTES; 
+    %END;
+  %END;
+
+
+  DATA PVALUE;
+    SET PVALUE;
+    ORD_ALPH=_N_;
+    CALL SYMPUT('PCHI'|| LEFT(_N_),TRIM(PUT(_PCHI_,8.)));
+    RUN;
+
+  PROC SORT DATA=PVALUE; BY DESCENDING _PCHI_; RUN; 
+
+  DATA PVALUE;
+    SET PVALUE;
+    ORD_PCHI=_N_;
+    CALL SYMPUT('OALPH'|| LEFT(_N_),TRIM(ORD_ALPH));
+    RUN;
+
+
+  %MACRO PRINTIT(I);
+    PROC PRINT DATA=MEANO&I (DROP=_TYPE_) SPLIT='*';
+      VAR &&RK_A&I
+      %IF &&TYPE&I=1 %THEN %DO;
+        MIN_ MAX_ MEAN_
+      %END;
+      _FREQ_ FREQPCT 
+      %IF &TARGET NE DUMMYZZZ %THEN %DO; 
+        &TARGET STDODDS
+
+      %END; 
+      &ADDVAR;
+      LABEL
+        MIN_='MIN'
+        MAX_='MAX'
+        MEAN_='MEAN'
+        &&RK_A&I='RANK/VALUE'
+        _FREQ_='FREQ'
+        FREQPCT='%FREQ'
+        &TARGET='%1'
+        STDODDS='STANDARDIZED*ODDS RATIO(%1)'
+        ;
+
+      FORMAT &&RK_A&I RANKFT. FREQPCT &TARGET STDODDS 
+             MEAN_ &ADDVAR 8.4; 
+      RUN; 
+  %MEND PRINTIT; 
+ 
+  TITLE3 "TABLE FOR DEPENDENT VARIABLE: &TARGET, &RISKTITL"; 
+  TITLE4 " "; 
+ 
+ 
+  %DO J=1 %TO &N_TZ; 
+    %IF %UPCASE(%SUBSTR(&PRTORDER,1,1))=P %THEN %LET I=&&OALPH&J; 
+    %ELSE %LET I=&J; 
+    %IF &J=1 %THEN %DO; 
+      TITLE5 
+    %END; 
+    %ELSE %DO; 
+      TITLE1 " "; 
+      TITLE2 
+    %END; 
+    "&&VAR_A&I --- &&LBL&I, _PCHI_ --- &&PCHI&I"; 
+    %PRINTIT(&I); 
+  %END; 
+ 
+ 
+  %IF %UPCASE(%SUBSTR(&PRTORDER,1,1))=P %THEN %DO; 
+    PROC SORT DATA=PVALUE; BY ORD_ALPH; RUN; 
+ 
+    TITLE1 " "; 
+    TITLE2 "ALPHABETIC ORDER OF VARIABLES"; 
+ 
+    DATA _NULL_; 
+      SET PVALUE; 
+      FILE PRINT LS=110; 
+      PUT 
+      VARNAMERANKFT. FREQPCT &TARGET STDODDS              
+MEAN_ &ADDVAR 8.4;       RUN;   %MEND PRINTIT;    
+TITLE3 "TABLE FOR DEPENDENT VARIABLE: &TARGET, &RISKTITL";   
+TITLE4 " ";     %DO J=1 %TO &N_TZ;     
+%IF %UPCASE(%SUBSTR(&PRTORDER,1,1))=P %THEN %LET I=&&OALPH&J;     
+%ELSE %LET I=&J;     %IF &J=1 %THEN %DO;       
+TITLE5     %END;     %ELSE %DO;       
+TITLE1 " ";       
+TITLE2     %END;     "&&VAR_A&I --- &&LBL&I, _PCHI_ --- &&PCHI&I";     %PRINTIT(&I);   %END;     
+%IF %UPCASE(%SUBSTR(&PRTORDER,1,1))=P %THEN %DO;     PROC SORT DATA=PVALUE; BY ORD_ALPH; RUN;      
+TITLE1 " ";     TITLE2 "ALPHABETIC ORDER OF VARIABLES";      DATA _NULL_;       SET PVALUE;      
+ FILE PRINT LS=110;       PUT       VARNAME15. +2
+     
+
+ ORD_PCHI 4.  +1
+      @@;
+      RUN;
+
+
+    PROC SORT DATA=PVALUE; BY ORD_PCHI; RUN;
+
+    TITLE1 " ";
+    TITLE2 "P-VLUE ORDER OF VARIABLES";
+
+    DATA _NULL_;
+      SET PVALUE;
+      FILE PRINT LS=110;
+      PUT
+      VARNAME $15. +2
+      ORD_PCHI 4.  +1
+      @@;
+      RUN;
+  %END;
+
+
+  OPTIONS NOTES;
+
+  PROC DATASETS;
+    DELETE DTCONTS SASINZZZ MEANO1 - MEANO&N_TZ PVALUE;
+    QUIT;
+  TITLE;
+%MEND CROSSTAB;
