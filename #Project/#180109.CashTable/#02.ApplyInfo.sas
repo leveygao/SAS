@@ -2,12 +2,12 @@
 
 
 /*取最新一期的申请记录 其他删去*/
-proc sort data=  bck.cashcreditapply_&tday.(keep=memberid  refBizId name identityNo  applyTime  crtTime) 
+proc sort data=  bck.cashcreditapply_&tday.(keep=memberid  refBizId name identityNo    crtTime) 
 out= creditapply;
 by memberid descending crtTime;
 run;
 
-proc sort data=		creditapply	 out= creditapply_ndp  dupout= creditapply_dp  nodupkey;
+proc sort data=		creditapply	 out= creditapply_ndp( rename=(crttime=creditapply_time) )  dupout= creditapply_dp  nodupkey;
 by memberid ;
 run;
 
@@ -17,12 +17,12 @@ run;
 proc sort data= bck.Cashfstaudit_&tday.   out=cashfstaudit_st(keep=memberid crttime zmscore) ;
 by memberid descending crttime ;
 run;
-proc sort data=cashfstaudit_st out=cashfstaudit(keep=memberid zmscore)    nodupkey;
+proc sort data=cashfstaudit_st out=cashfstaudit( rename=(crttime=fstaudit_time))    nodupkey;
 by memberid;
 run;
 
 
-proc sort data= bck.instalacct_&tday. out=instalacct  nodupkey;
+proc sort data= bck.instalacct_&tday. out=instalacct(rename=(crtTime=acct_time))    nodupkey;
 where deleted=0 and  acctType=2 ;
 by memberid   ;
 run;
@@ -33,59 +33,65 @@ merge instalacct(in=a)  creditapply_ndp(in=b )  cashfstaudit(in=c );
 by memberid;
 length Conclusion $10.;
 /*if a;*/
+
+
 if a then Conclusion="Pass";
 else Conclusion="Fail";
 
+
+if not missing(acct_time) then Apply_Time= acct_time;
+else if  not missing(creditapply_time) then Apply_Time= creditapply_time;
+else if  not missing(fstaudit_time) then Apply_Time= fstaudit_time;
+else Apply_Time=.;
+ 
+Apply_date=put(datepart(Apply_Time),yymmddn8.);
 Match_apply=compress(a||b||c);
 
+if missing(Apply_Time) then missing_applytime=1;else missing_applytime=0;
+
+format Apply_Time DATETIME20. ;
 run;
 
 proc freq data=apply_info;
 title 	"Match_apply";
 tables	 Match_apply /missing norow nocol;
 tables	 Conclusion /missing norow nocol;
+tables missing_applytime;
 run;
+
 
 
 data 	 dt.Cash_Apply_Info_&tday.	;
 set  	 apply_info;
 by memberid;
-length memberid1 $56.  conclusion $12.  ; /*companyName1 $60. contactName11 $20.  contactName21 $20.  name1 $20.   ; */
+length memberid1 $56.  ; /*companyName1 $60. contactName11 $20.  contactName21 $20.  name1 $20.   ; */
 
 memberid1=compress(memberid);
 
 
 /* 资金方渠道 */
 length Customer_Pricing_Acct $6.;
-	if memberlevel in(3,11) 		 then  Customer_Pricing_Acct= 'A';			
-	else if memberlevel in(7,12)   then  Customer_Pricing_Acct= 'B';
-	else if memberlevel in(15)   then    Customer_Pricing_Acct= 'NB';
-	else if memberlevel in(27,28,16 ) then  Customer_Pricing_Acct= 'B-';
-	else if memberlevel in(13 )  then   Customer_Pricing_Acct= 'C';
-	else if memberlevel in(14 )  then   Customer_Pricing_Acct= 'C-';
+	if memberlevel  in(3,11) 		 then  Customer_Pricing_Acct= 'A';		
+	else if memberlevel in( 7 , 12 )   then  Customer_Pricing_Acct= 'B';
+	else if memberlevel in( 15 )   then  Customer_Pricing_Acct= 'NB';
+	else if memberlevel in( 16 , 17 , 27 , 28 , 29 )   then    Customer_Pricing_Acct= 'B-';
+	else if memberlevel in( 14  ) then  Customer_Pricing_Acct= 'C-';
+	else if memberlevel in( 13 )  then   Customer_Pricing_Acct= 'C';
+	else if memberlevel in( 18 )  then   Customer_Pricing_Acct= 'PD';
+	
 	
 	else if memberlevel=100 then Customer_Pricing_Acct='Imp';
+	else if missing(memberlevel) then Customer_Pricing_Acct='FAIL';
 	else  Customer_Pricing_Acct='Other';
 
+	
 
-
-applydate=put(datepart(applyTime),yymmddn8.);
-applymth=put(datepart(applyTime),yymmn6.);
-
-
-drop memberid      ;
+drop memberid     missing_applytime ;
 
 rename
 memberid1 =memberid        ;
 
 run;
-
-proc freq data=dt.Cash_Apply_Info_&tday.	;
-tables Customer_Pricing_Acct;
-run;
-
-
-
 
 
 proc contents data=  dt.Cash_Apply_Info_&tday.	;

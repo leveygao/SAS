@@ -3,6 +3,11 @@ options user=work;
 
 
 	
+
+
+
+
+	
 /* FinalApply */
 %LET INST_VAR= refBizId memberId name identityNo  loanAmount  loanTermAmount  loanTermUnit loanMethod
 				conclusion  memberlevel  creditLine  dataRate extParams riskRuleType crtTime  updTime
@@ -22,12 +27,12 @@ where riskRuleType in ('biz-fq-rcs.CashFstAudit','biz-fq-rcs.memberLevelGrant') 
 
 length ZMscore1 $15. 	ZMscore 8.;
 if index(extParams,"zmCreditScore")>0 then ZMscore1=substr(extParams,index(extParams,"zmCreditScore")+14,3);
-else ZMscore1="0";
+else ZMscore1=".";
 
-if ZMscore1 not in("N/A","null","nul",".") then  ZMscore=ZMscore1+0; else ZMscore=.;
+if compress(ZMscore1) not in("N/A","null","nul",".","0,","0") then  ZMscore=compress(ZMscore1,,'kdp')+0; else ZMscore=.;
 
 
-keep refBizId memberId crtTime  updTime  ZMscore ;
+keep refBizId memberId crtTime  updTime  ZMscore1  ZMscore ;
 
 run;
 
@@ -92,15 +97,5 @@ DATA  bck.LoanBill_&TDAY.;
 						UPDATE_DAY="&TDAY.";
 	
 	RUN;
-	
 
-/* InstalAcct_*/
-DATA   bck.InstalAcct_&TDAY.   ;
-	SET  Ins.InstalAcct ( keep= memberid  frozen  payable  totalquota riskquota risklevel  activetype   deleted   acctType
-							channelcode acctTempid accttype category  major  memberlevel  mobile crttime acctstatus
-							WHERE=( acctType=2   ));
-						UPDATE_DAY="&TDAY.";
-	
-	RUN;
-	
 	

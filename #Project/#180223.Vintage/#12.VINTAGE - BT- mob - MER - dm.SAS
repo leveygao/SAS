@@ -1,54 +1,40 @@
 %inc ".\#00.OPTION.SAS";
 
 
-proc sort data=  Ins.InstalApply
-out=instalapply(keep= memberid  channelcode  crttime activeType state opttype productType) nodupkey;
-where activeType='virtual_card' and opttype=5 and state=1 ;/*  and  channelcode ="C001"; */
-by memberid ;
+proc freq data=  bt.dm_bt_post_info_&tday.;
+tables   queue/missing norow nocol;
 run;
 
-
-data bt_table1;
-SET bt.bt_post_info_&tday.
-(keep=memberid orderno mob  UPDATE_DAY  UPDATE_DAY   new_dlq_mthend  loan_mth  mob  merchant_type  due_amt  loanamount loan_amt  new_repaydate 
-channelType
-);
-WHERE channelType ="C001";
+data bt_table;
+SET   bt.dm_bt_post_info_&tday.;
+WHERE channelType ="C005";
 
 
 STATS_DAY= intnx("month",input(UPDATE_DAY,yymmdd8.),-1);
 STATS_MTH= put(STATS_DAY,yymmn6.);
 run;
 
-proc sql;
-create table bt_table as
-select a.*, 
-			case when b.activeType='virtual_card' then 1 else 0 end as carduser,
-			case when b.activeType='virtual_card' and loan_mth>='201802' then 1 else 0 end as cardorder 
-
-from bt_table1 as a left join instalapply   as b
-on a.memberid=b.memberid
-order by memberid
-;
-quit;
-
 
 %let dlq= 1
-;
-
-
-%let vcard= 0
 ;
 
 data BT_VINM1 BT_VINM2 BT_VINM3;
 set bt_table;
 
-if  new_dlq_mthend>&dlq. and   carduser= &vcard.   then output BT_VINM1;
+
+if new_dlq_mthend>=&dlq. then output BT_VINM1;
 /*
-else if  mob>=2 and queue="M1-M2" then output BT_VINM2;
-else if  mob>=3 and queue not in ("C","Î´µ½ÆÚ") then output BT_VINM3;
+else if  mob>=2 and new_dlq_mthend>=30 then  output BT_VINM2;
+else if   mob>=3 and new_dlq_mthend>=30 then output BT_VINM3;
+
+
 */
 run;
+
+proc freq data= BT_VINM1;
+tables   queue*merchant_type/missing norow nocol;
+run;
+
 
 
 proc sql;
@@ -64,7 +50,6 @@ order by loan_mth,mob
 ;
 quit;
 
-/*
 proc sql;
 create table BT_VIN_M2 as
 select loan_mth,mob,   merchant_type,
@@ -90,16 +75,16 @@ group by loan_mth,mob  ,merchant_type
 order by loan_mth,mob
 ;
 quit;
-*/
+
 
 proc sql;
 create table Loan_amt as
-select loan_mth,  sum(loanamount)  as loan_amt format comma15.2  ,merchant_type
+select loan_mth,  sum(loan_amt)/100  as loan_amt format comma15.2  ,merchant_type
 from (
-select distinct memberid, orderno, loanamount,loan_mth ,merchant_type
+select distinct memberid, orderno, loan_amt,loan_mth ,merchant_type
 
 from bt_table
-where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH and carduser=&vcard.
+where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH
 )
 
 
@@ -155,9 +140,9 @@ run;
 
 
 PROC EXPORT DATA=   M1_&name._table
-            OUTFILE= ".\EXCEL\Card&vcard._BT_&dlq..XLSX" 
+            OUTFILE= ".\EXCEL\DM_&dlq._&tday..XLSX" 
             DBMS=EXCEL REPLACE;
-     SHEET="Card&vcard._BT_&dlq._&name."; 
+     SHEET="DM_&dlq._&name."; 
 RUN;
 
 
@@ -167,14 +152,9 @@ RUN;
 %mend;
 %a;
 
- 
-
 
 
 endsas;
-
-
-
 
 
 
@@ -235,7 +215,7 @@ run;
 
 
 PROC EXPORT DATA=   M2_&name._table
-            OUTFILE= ".\EXCEL\M2_&name..XLSX" 
+            OUTFILE= ".\EXCEL\DM_M2_&name..XLSX" 
             DBMS=EXCEL REPLACE;
      SHEET="M2_&name"; 
 RUN;
@@ -292,7 +272,7 @@ run;
 
 
 PROC EXPORT DATA=   M3_&name._table
-            OUTFILE= ".\EXCEL\M3_&name..XLSX" 
+            OUTFILE= ".\EXCEL\DM_M3_&name..XLSX" 
             DBMS=EXCEL REPLACE;
      SHEET="M3_&name"; 
 RUN;

@@ -66,10 +66,10 @@ Month_intv=intck("month",input(loan_day,yymmdd8.),input("&tday.",yymmdd8.));
 if   mob<=3 and flag_return in(1,9) then EVER_3M2=1;else EVER_3M2=0;   /* Month_intv>=3 and */
 if   mob<=6 and flag_return in(1,9) then EVER_6M2=1;else EVER_6M2=0;
 if   mob<=6 and flag_return in(1,9) then EVER_6M3=1;else EVER_6M3=0;
-if   flag_return in(1,9) then DLQ_TIMES=1;else DLQ_TIMES=0;
+ 
 
 keep memberid orderno loan_day loan_mth orderno  mob  Month_intv   flag_return   EVER_3M2   EVER_6M3 EVER_6M2
-num  overduenum   isoverdue   DLQ_TIMES  new_repaydate
+num  overduenum   isoverdue      new_repaydate
 ;
 run;
 
@@ -81,8 +81,8 @@ select distinct memberid,orderno,loan_mth, Month_intv,
 
  		sum(EVER_3M2) as EVER_3M2_MOBcnt, 
 		sum(EVER_6M2) as EVER_6M2_MOBcnt,
-		sum(EVER_6M3) as EVER_6M3_MOBcnt,
-		sum(DLQ_TIMES) as DLQ_TIMES_MOBcnt
+		sum(EVER_6M3) as EVER_6M3_MOBcnt
+
 
 
 from  cash_order_cnt
@@ -100,8 +100,8 @@ select  memberid,  count(distinct orderno) as Order_cnt,
 
 	count(distinct case when   EVER_3M2_MOBcnt>=2 then orderno end) as EVER_3M2_ordercnt,
 	count(distinct case when   EVER_6M2_MOBcnt>=2 then orderno end) as EVER_6M2_ordercnt,
-	count(distinct case when   EVER_6M3_MOBcnt>=2 then orderno end) as EVER_6M3_ordercnt,
-	sum(DLQ_TIMES_MOBcnt) as DLQ_TIMES_cnt
+	count(distinct case when   EVER_6M3_MOBcnt>=2 then orderno end) as EVER_6M3_ordercnt
+
  
 
 from    cash_status  
@@ -232,11 +232,12 @@ by memberid ;
 run;
 
 
+
 proc sql;
 create table final_table as
 select a.*, 
-			case when b.activeType='virtual_card' then 1 else 0 end as carduser,
-			c.applydate
+			case when b.activeType='virtual_card' then 1 else 0 end as carduser ,
+			c.apply_date 
 			
 
 
@@ -252,16 +253,60 @@ quit;
 
 
 
-proc sort data=final_table out= DT.CASH_TAG_DLQ_&tday. nodupkey;
-by memberid;  
+
+/* dlq times */
+
+
+proc sort data= cash   out= Cash_post_info_dlq 
+(keep= memberid orderno loan_date loan_mth mob totalnum REPAYDATE_NUM PAYDAY_NUM new_repaydate flag_return isoverdue 
+overduenum new_dlq_mthend )
+;
+by  memberid loan_date  orderno mob ;
 run;
 
 
 
+data Cash_post_info_dlq0 ;
+set  Cash_post_info_dlq ;
+by memberid loan_date  orderno  mob ;
+
+where  new_repaydate<= input("&tday.",yymmdd8.);
+
+retain Dlq_cnt_post_order;
+
+if first.orderno then Dlq_cnt_post_order=0;
+if OVERDUENUM>0   then Dlq_cnt_post_order + 1 ;
+
+if last.orderno and FLAG_RETURN in( 9 ) and PAYDAY_NUM< new_repaydate then Dlq_cnt_post_order= Dlq_cnt_post_order -1 ;
+
+if last.orderno ;
+run;
 
 
+data Cash_post_info_dlq1 ;
+set  Cash_post_info_dlq0 ;
+by memberid loan_date  orderno  mob ;
+
+retain Dlq_cnt_post;
+if first.memberid then Dlq_cnt_post=0;
+Dlq_cnt_post+Dlq_cnt_post_order;
 
 
+if last.memberid ;
+keep memberid  Dlq_cnt_post ;
+run;
+
+
+proc sql;
+create table DT.CASH_TAG_DLQ_&tday.  as 
+select a.*, 
+   b.Dlq_cnt_post
+
+from final_table as a left join Cash_post_info_dlq1 as b
+	on a.memberid=b.memberid
+order by memberid, Loan_day_Frs 
+;
+quit;
 
 
  

@@ -1,5 +1,5 @@
 %inc ".\#00.OPTION.SAS";
-libname bt "D:\GY\18.1.31 BT_TABLE_SUM\data";
+
 
 proc sort data=  Ins.InstalApply
 out=instalapply(keep= memberid  channelcode  crttime activeType state opttype productType) nodupkey;
@@ -44,7 +44,7 @@ quit;
 ;
 
 
-%let vcard=0
+%let vcard= 0
 ;
 
 data BT_VINM1  ;
@@ -135,7 +135,7 @@ run;
 
 
 PROC EXPORT DATA=   M1_&name._table
-            OUTFILE= ".\EXCEL\Card&vcard._BT_MID_&dlq._&name..XLSX" 
+            OUTFILE= ".\EXCEL\Card&vcard._BT_MID_&dlq..XLSX" 
             DBMS=EXCEL REPLACE;
      SHEET="Card&vcard._BT_MID_&dlq._&name."; 
 RUN;

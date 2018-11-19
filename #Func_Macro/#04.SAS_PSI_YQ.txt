@@ -1,0 +1,89 @@
+/**dsin_act 实际数据，dsin_exp 期望数据，dsout 输出psi数据集，actual 实际数据集target变量，expect 期望数据集target变量, grps分组组数   **/
+
+%macro psi(dsin_act, dsin_exp, dsout, actual,expect,grps);
+
+data __temp;
+
+/* keep x type; set &dsin_act.(in=a ) &dsin_expt.(in=b); */
+length type $20.;
+set &dsin_act.(in=a rename=(&actual.=x) ) &dsin_exp.(in=b  rename=(&expect.=x));
+
+if a  then type="actual";
+else type="expect";
+
+ 
+run;
+
+proc sort data= __temp;
+by x type;
+run; 
+
+proc sql noprint;
+select max(x),min(x),sum(type="actual"),sum(type="expect") 
+into:max,:min,:acnt,:ecnt from 
+__temp;
+quit;
+
+%*%put &max,&min;
+
+%let step = %sysevalf(&max -&min)/&grps;
+%*%put &max,&min,&step,&grps;
+data __temp2;
+set __temp;
+%do x = 0 %to &grps - 1 ;
+if (&min+&x*&step)<= x <= (&min+(&x+1)*&step)
+then bucket=compress('['||put(&min+&x*&step,9.2)||','||put(&min+(&x+1)*&step,9.2)||')') ;
+
+
+else   if x = &max. then bucket=compress('['||put(&min+&x*(&grps-1),9.2) || ',' || put(&max,9.2) || ']' );    
+/*  if x = &max. then bucket= compress('['||put(&min+&x*(&grps),9.2)||','||put(&max,9.2)||')');   */
+
+%end; 
+
+run;
+
+proc sql;
+create table &dsout.
+as 
+select *, sum(psi) as psi_total
+from(
+select bucket, sum(type="actual")/&acnt. as apct, sum(type="expect")/&ecnt. as epct,
+( (case when calculated apct=0 then 0.0001 else calculated apct end) - 
+(case when calculated epct=0 then 0.0001 else calculated epct end) 
+)*log((case when calculated apct=0 then 0.0001 else calculated apct end) / 
+(case when calculated epct=0 then 0.0001 else calculated epct end)) as psi
+from __temp2
+group by bucket)
+;
+
+select sum(psi) as psi into:psi from &dsout.;
+quit;
+
+
+data plotpsi;
+set &dsout.(in=a rename=(apct=pct))  &dsout.(in=b rename=(epct=pct)); 
+pct=pct*100;
+
+if a then type="actual";
+else type="expect";
+keep bucket pct type;
+run;
+
+
+
+%mend;
+
+
+%macro plotpsi( plotdata );
+
+proc sgplot data=  &plotdata.   noautolegend;
+
+   title "PSI(&psi.)";
+   vbar bucket/ response=pct group=type groupdisplay=cluster stat=sum name='Bar';
+   
+   yaxis  label='占比(%)' grid;
+   xaxis label='分数段' ;
+   keylegend 'Bar' / title='Type:' location=outside across=2;
+run;
+
+%mend;

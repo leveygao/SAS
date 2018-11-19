@@ -1,5 +1,5 @@
 %inc ".\#00.OPTION.SAS";
-libname bt "D:\GY\18.1.31 BT_TABLE_SUM\data";
+
 
 
 
@@ -13,7 +13,7 @@ STATS_MTH= put(STATS_DAY,yymmn6.);
 run;
 
 
-%let dlq= 4
+%let dlq= 1
 ;
 
 
@@ -131,7 +131,7 @@ run;
 
 
 PROC EXPORT DATA=   M1_&name._table
-            OUTFILE= ".\EXCEL\BT_&dlq._&name..XLSX" 
+            OUTFILE= ".\EXCEL\BT_MerDlq&dlq._&tday..XLSX" 
             DBMS=EXCEL REPLACE;
      SHEET="BT_&dlq._&name."; 
 RUN;

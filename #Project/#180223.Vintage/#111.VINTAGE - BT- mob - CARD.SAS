@@ -1,5 +1,5 @@
 %inc ".\#00.OPTION.SAS";
-libname bt "D:\GY\18.1.31 BT_TABLE_SUM\data";
+
 
 proc sort data=  Ins.InstalApply
 out=instalapply(keep= memberid  channelcode  crttime activeType state opttype productType) nodupkey;
@@ -46,7 +46,7 @@ quit;
 /* para input*/
 %let dlq= 1
 ;
-%let vcard=1
+%let vcard= 0
 ;
 
 

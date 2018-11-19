@@ -55,6 +55,12 @@ run;
 
 
 /*==========================================TAG POST========================================*/
+proc sort data=bck.loanbill_&tday. out= loanbill  ;
+where  deleted=0  ;
+by  memberid;
+run;
+
+
 /* loan_bill */
 /* 有贷后表现的 */	
 proc sql;
@@ -65,11 +71,12 @@ select a.*,
 		b.acctTempId as loan_acctTempId
 		
 
-from order_pay as a left join bck.loanbill_&tday. as b
+from order_pay as a left join  loanbill as b
 	on 	a.memberid=b.memberid  and a.orderno=b.orderno
 			
 			
-where  Match_repay=11
+where  Match_repay=11 and a.deleted=0  and b.deleted=0  
+
 order by  a.memberid, a.orderno , a.repayDate , a.payDate
 
  ;
@@ -84,7 +91,6 @@ from 	applyorder_repay	 as a
 			left join   dt.Cash_apply_info_&tday. as c    /*===========use apply info for memberlevel==========*/
 				on a.memberid= c.memberid
 		
-
 order by  a.memberid, a.orderno , a.repayDate , a.payDate
 
  ;
@@ -198,6 +204,7 @@ quit;
 
 
 
+
 data  APPLY_ORDER_DLQ4 ;
 merge  APPLY_ORDER_PAY_NDP   dlqpatch;
 by memberId orderno   repayDate   Loan_mth;
@@ -225,9 +232,12 @@ if missing(paydate) then Pay_Dlqnum+1;
 	if first.orderno  then Pay_Dlqnum1=0;
 	if flag_return in(1,9) then do;
 		if   char_repay = char_payday then Pay_Dlqnum1=0;  /*同月内还清 则清零*/
+
+
 		 
-		else if Pay_lag<=REPAYDATE_NUM and not missing(PAYDAY_NUM) 
-		and char_repay<char_payday  then do; /*跨月   先清零在计数*/
+		else if ( Pay_lag<=REPAYDATE_NUM 	or  put(REPAYDATE_NUM,yymmn6.) = put(Pay_lag,yymmn6.) )
+		and  not missing(PAYDAY_NUM)    
+		and  char_repay<char_payday  then do; /*跨月   先清零在计数      */
 				Pay_Dlqnum1=0;
 				Pay_Dlqnum1+1;
 				end;
@@ -246,9 +256,12 @@ if missing(paydate) then Pay_Dlqnum+1;
 
 format Stats_day yymmddn8. Pay_lag yymmddn8.;
 
+
+
 /*keep  memberId  orderno    repayDate  Loan_mth   REPAYDATE_NUM  PAYDAY_NUM  MTH_DAYS Pay_Dlqnum*/
-/*Pay_Dlqnum1 Pay_lag BILL_NUM Dlqday_mth FLAG_DLQDAY_max flag_return INTC_MTHEND */
+/*Pay_Dlqnum1 Pay_lag BILL_NUM Dlqday_mth FLAG_DLQDAY_max flag_return INTC_MTHEND   char_repay  char_payday*/
 /*;*/
+
 run;
 
 
@@ -272,6 +285,9 @@ end;
 
 if flag_return in(1,9) then do;
 	if  Pay_Dlqnum1=0 and put(REPAYDATE_NUM,yymmn6.)=  put(PAYDAY_NUM,yymmn6.)  then DLQ_D9=intck("day",REPAYDATE_NUM,PAYDAY_NUM);
+	
+/*	else if Pay_Dlqnum1=1 and INTC_MTHEND=0 then DLQ_D9=INTC_MTHEND+1;	 */
+
 	else if Pay_Dlqnum1=0 and intck("month",REPAYDATE_NUM,PAYDAY_NUM)>=1  then DLQ_D9=INTC_MTHEND;
 	else if Pay_Dlqnum1=1 and INTC_MTHEND^=0 then DLQ_D9=INTC_MTHEND;  /*非月末*/
 	else if Pay_Dlqnum1=1 and INTC_MTHEND=0 then DLQ_D9=INTC_MTHEND+1;	 /*月末*/
@@ -280,10 +296,13 @@ if flag_return in(1,9) then do;
 end;	
 else DLQ_D9=0;
 
-/*keep  memberId  orderno    repayDate  Loan_mth   REPAYDATE_NUM  PAYDAY_NUM  MTH_DAYS*/
-/*Pay_Dlqnum1 Pay_lag BILL_NUM Dlqday_mth FLAG_DLQDAY_max flag_return INTC_MTHEND  DLQ_D1 DLQ_D9 totalnum*/
+
+/*keep  memberId  orderno    repayDate  Loan_mth   REPAYDATE_NUM  PAYDAY_NUM  MTH_DAYS   char_repay  char_payday*/
+/*Pay_Dlqnum1 Pay_lag BILL_NUM Dlqday_mth FLAG_DLQDAY_max flag_return INTC_MTHEND  DLQ_D1 DLQ_D9  */
 /*;*/
+
 run;
+
 
 
 data  CASH_ORDER_PAY_&TDAY.;
@@ -291,7 +310,10 @@ set APPLY_ORDER_DLQ5;
  
 
 	/* DLQ_DAYS */
-	if flag_return=1 then Dlqday_mthend=dlq_d1;
+	if flag_return=1 and dlq_d1>dlq_d9  then Dlqday_mthend=dlq_d1;
+
+	else if flag_return=1 and dlq_d1<=dlq_d9  then Dlqday_mthend=dlq_d9;
+
 	else if flag_return=9 and  put(REPAYDATE_NUM,yymmn6.)=put(PAYDAY_NUM,yymmn6.)   then Dlqday_mthend= 0;
 	ELSE IF flag_return=9    then Dlqday_mthend=dlq_d9;
 	else Dlqday_mthend=Dlqday_mth;
@@ -302,6 +324,8 @@ Pay_Dlqnum1 Pay_lag BILL_NUM Dlqday_mth FLAG_DLQDAY_max flag_return Dlqday_mthen
 */
  
 run;
+
+
 
 /*================================DLQ_DAYS CAL END================================*/
 proc contents data=	 CASH_ORDER_PAY_&TDAY.;

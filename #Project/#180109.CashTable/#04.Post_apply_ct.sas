@@ -1,5 +1,6 @@
 %inc ".\#00.OPTION.SAS";
 
+
 proc sort data=  dt.cash_order_pay_&TDAY.  out= cash_table  ;
 by memberid orderno loan_mth bill_num;
 run;
@@ -263,7 +264,7 @@ by memberid orderno mob;
 retain Due_amt1;
 	if first.orderno then Due_amt1=0;
 
-	if Pay_Dlqnum=1 then  Due_amt1=   realLoanAmt-(mob-1)*new_principal;    /**realLoanAmt/
+	if Pay_Dlqnum=1 then  Due_amt1=   realLoanAmt-(mob-1)*new_principal;    /*realLoanAmt*/
 	if Pay_Dlqnum>=1 then Due_amt1=Due_amt1;
 
 keep memberid orderno flag_return  mob  totalnum  
@@ -272,6 +273,7 @@ REPAYDATE_NUM  PAYDAY_NUM new_repaydate       new_dlq_mthend
     Pay_Dlqnum 
 ;
 run;
+
 
 
 /* due flag9 */
@@ -336,13 +338,130 @@ new_MONTHBEG  new_MONTHEND
 
 
 
+/* mthend_remainprincipal calculate patch*/
 
-data cash_dlqdayamt1;
-set cash_dlqdayamt;
+proc sort data=  cash_dlqdayamt    out=  cash_dlqdayamt1(
+keep = memberid orderno flag_return  mob  Loan_mth loan_day totalnum   loan_amt
+  remainPrincipal new_remainPrincipal principal 
+  PAYDAY_NUM new_repaydate     new_dlq_mthend    );
+
+by memberid loan_day orderno mob;
+run;
+
+
+
+data cash_dlqdayamt2;
+set cash_dlqdayamt1 ;
+by memberid loan_day orderno mob ;
+/*where flag_return^=-9;*/
+retain     cumsum_principal dlq_cnt;
+
+if first.orderno  then  do;
+cumsum_principal=0;
+dlq_cnt=0;
+end;
+
+if new_dlq_mthend>0 and flag_return^=-9 then do;
+dlq_cnt+1;
+cumsum_principal=cumsum_principal+principal;
+end;
+else if new_dlq_mthend=0 then do;
+dlq_cnt = 0;
+cumsum_principal= 0;
+end;
+/*else if flag_return=-9 then do;*/
+/*dlq_cnt=-999;*/
+/*cumsum_principal=-999;*/
+/*end;*/
+
+run;
+
+
+
+data cash_dlqdayamt3;
+set cash_dlqdayamt2 ;
+by memberid loan_day orderno mob ;
+
+lag_dlq=lag(dlq_cnt);
+retain mob_remainPrincipal;
+if first.orderno  then  do;
+lag_dlq=. ;
+mob_remainPrincipal=loan_amt ;
+end;
+
+if dlq_cnt=0 and (lag_dlq=0 or  lag_dlq=. )  		then mob_remainPrincipal=mob_remainPrincipal-  principal ;
+else if  dlq_cnt>0 and (lag_dlq=0 or  lag_dlq=. )   then mob_remainPrincipal=mob_remainPrincipal  ;
+else if  dlq_cnt>0 and lag_dlq>0  then mob_remainPrincipal=mob_remainPrincipal  ;
+else if  dlq_cnt=0 and lag_dlq>0  then mob_remainPrincipal=mob_remainPrincipal -  cumsum_principal ;
+else   mob_remainPrincipal=-99999;
+
+
+if   last.orderno and flag_return^=-9 and  new_dlq_mthend=0 then mob_remainPrincipal=0; 
+run;
+
+
+
+proc sort data=  cash_dlqdayamt3    ;
+/*where flag_return^=-9;  */
+/*100014984  100087267  101607663  */
+by memberid loan_day orderno descending mob;
+run;
+
+
+/* advance clean*/
+data cash_dlqdayamt4 ;
+set cash_dlqdayamt3;
+by  memberid loan_day orderno descending mob ;
+
+retain temp_rmprin ;
+lag_payday=lag(PAYDAY_NUM) ;
+
+if first.orderno then do;
+temp_rmprin = mob_remainPrincipal ;
+lag_payday=.;
+end;
+
+if      PAYDAY_NUM<=lag_payday<new_repaydate and flag_return=-1 then  temp_remainPrincipal=temp_rmprin;else temp_remainPrincipal=.;
+
+if not missing(temp_remainPrincipal) and temp_remainPrincipal^=. then  mthend_remainPrincipal=temp_remainPrincipal;
+else mthend_remainPrincipal=mob_remainPrincipal;
+
+format lag_payday yymmdd8.;
+run;
+
+
+
+proc means data=cash_dlqdayamt4 n max min p1 p10 p25 p50 p75 p90 ;
+title "remainPrincipal";
+var mob_remainPrincipal temp_remainPrincipal mthend_remainPrincipal ;
+run;
+
+
+
+proc sql;
+create table  cash_dlqdayamt5 as
+select a.*,
+		b.mob_remainPrincipal  ,  b.mthend_remainPrincipal
+
+from Cash_dlqdayamt as a left join  cash_dlqdayamt4 as b
+	on a.memberid=b.memberid and a.orderno=b.orderno and a.mob=b.mob
+
+order by memberid , loan_day , orderno , mob 
+;
+quit;
+
+
+
+/* mthend_remainprincipal end*/
+
+
+
+data cash_dlqdayamt_fin;
+set cash_dlqdayamt5;
+by memberid;
+
 length   queue $10.    ;
 
-
- 
 	/* queue */
 	if     		 new_dlq_mthend=0 then  Queue="C";
 	else if 	30>=new_dlq_mthend>0 then Queue="M0-M1";
@@ -365,12 +484,14 @@ length   queue $10.    ;
 	Due_amt="增补账期月末逾期金额"
 	Loan_mth ="放贷月" 
 	 
+	flag_return='当期还款状态'
 	Queue ="增补账期月末逾期队列"
 	mob="增补账期"
 	num="原账期"
 	new_dlq_mthend="增补账期月末逾期天数"
 	Dlqday_mthend="月末逾期天数"
-	
+	mob_remainPrincipal = "增补账期月末剩余本金"
+	mthend_remainPrincipal = "增补账期月末剩余本金(清贷)"
 	;
 	
 	drop  &dropvar.   	match:
@@ -384,61 +505,270 @@ run;
 
 
 /* new memberlevel && quota */
-%inc ".\#00.OPTION.SAS";
 
-proc sort data= Ins.InstalAcct out=InstalAcct
-(keep= memberid  frozen  payable  totalquota riskquota risklevel  activetype
-channelcode acctTempid accttype category  major  memberlevel  mobile crttime acctstatus
+proc sort data= bck.instalacct_&tday. out=InstalAcct
+(keep= memberid   totalquota riskquota  risklevel  activetype
+channelcode acctTempid accttype category  major  memberlevel  mobile crttime 
 rename=(memberlevel=memberlevel_acct)) nodupkey; 
+
 where deleted=0 and  acctType=2  ;
 by memberid;
 
 run;
 
-proc sort data=cash_dlqdayamt1;
-by memberid;
-run;
 
-
-
-
-
-data dt.cash_post_info_&tday.;
-merge  cash_dlqdayamt1(in=a) 
-		InstalAcct(in=b keep= memberid  totalquota  memberlevel_acct  channelcode accttype acctstatus activetype) ;
+data  cash_post_info_merge ;
+merge  cash_dlqdayamt_fin(in=a) 
+		InstalAcct(in=b keep= memberid  totalquota  memberlevel_acct  channelcode accttype  activetype ) ;
 by memberid;
 if a;
 match_post=10*a+b;
 
 /* 资金方渠道 */
-length Customer_Pricing_Acct $6.;
+length Customer_Pricing_Acct $16.;
 	if memberlevel_acct in(3,11) 		 then  Customer_Pricing_Acct= 'A';		
 	else if memberlevel_acct in( 7 , 12 )   then  Customer_Pricing_Acct= 'B';
 	else if memberlevel_acct in( 15 )   then  Customer_Pricing_Acct= 'NB';
 	else if memberlevel_acct in( 16 , 17 , 27 , 28 , 29 )   then    Customer_Pricing_Acct= 'B-';
 	else if memberlevel_acct in( 14  ) then  Customer_Pricing_Acct= 'C-';
 	else if memberlevel_acct in( 13 )  then   Customer_Pricing_Acct= 'C';
+	else if memberlevel_acct in( 18 )  then   Customer_Pricing_Acct= 'PD';
+	else if (memberlevel_acct)=0  then   Customer_Pricing_Acct= 'NANJING_BANK';
+	else if missing(memberlevel_acct)  then   Customer_Pricing_Acct= 'NONE';
+
 	
-	/*
-	if memberlevel_acct in(3,11) 		 then  Customer_Pricing_Acct= 'A';			
-	else if memberlevel_acct in(7,12)   then  Customer_Pricing_Acct= 'B';
-	else if memberlevel_acct in(15)   then    Customer_Pricing_Acct= 'NB';
-	else if memberlevel_acct in(27, 28, 16 ) then  Customer_Pricing_Acct= 'B-';
-	else if memberlevel_acct in(13 )  then   Customer_Pricing_Acct= 'C';
-	else if memberlevel_acct in(14 )  then   Customer_Pricing_Acct= 'C-';
-	
-	*/
-	
-	
-	else if memberlevel_acct=100 then Customer_Pricing_Acct='Imp';
+	else if memberlevel_acct in(99, 100)   then Customer_Pricing_Acct='Imp';
+	else if memberlevel_acct=10000    then Customer_Pricing_Acct='Test';
 	else  Customer_Pricing_Acct='Other';
 
 run;
+proc freq data= cash_post_info_merge;
+title "matchpost";
+tables match_post /missing;
+
+run;
+
+
+
+
+
+/*  quota/level track back    */
+proc sql;
+create table Cash_post_info_level_min	   as
+select 
+		a.memberid, a.orderno , a.loan_day  , a.memberlevel_acct , a.loan_date , 
+
+		b.before_level_early , b.after_level  , b.level_crtTime  , 
+	    case when  loan_date<=  level_crtTime_num  then 1 
+			 when  loan_date>  level_crtTime_num and not missing(level_crtTime_num)  then 0 
+			 else . end as loan_before_level_change,
+
+		abs(loan_date-level_crtTime_num) as level_change_intv
+
+from cash_post_info_merge as a  left join    bck.Acctoptlog_level_&tday.  as b
+	on a.memberid = b.memberid
+
+/*group by a.memberid , loan_day , orderno*/
+order by memberid , loan_day , orderno
+
+;
+quit;
+
+
+proc sort data= Cash_post_info_level_min  out= Cash_post_info_level_min_srt  ;
+by  memberid  loan_day  orderno  level_change_intv  ;
+run;
+
+proc sort data= Cash_post_info_level_min_srt  out= Cash_post_info_level_min_ndp nodupkey  ;
+by  memberid  loan_day  orderno    ;
+run;
+
+
+
+
+proc sql;
+create table Cash_post_info_quota_min	   as
+select 
+		a.memberid, a.orderno , a.loan_day  , a.totalquota , a.loan_date ,
+
+		b.before_quota_early , b.after_quota  , b.quota_crtTime  , 
+	    case when  loan_date<=  quota_crtTime_num  then 1
+			 when  loan_date>  quota_crtTime_num and not missing(quota_crtTime_num)  then 0 
+			 else . end as loan_before_quota_change,
+
+		abs(loan_date-quota_crtTime_num) as quota_change_intv
+
+from cash_post_info_merge as a  left join    bck.Acctoptlog_quota_&tday.  as b
+	on a.memberid = b.memberid
+
+/*group by a.memberid , loan_day , orderno*/
+order by memberid , loan_day , orderno
+
+;
+quit;
+
+
+proc sort data= Cash_post_info_quota_min  out= Cash_post_info_quota_min_srt  ;
+by  memberid  loan_day  orderno  quota_change_intv  ;
+run;
+
+proc sort data= Cash_post_info_quota_min_srt  out= Cash_post_info_quota_min_ndp nodupkey  ;
+by  memberid  loan_day  orderno    ;
+run;
+
+
+
+proc sql;
+create table  Cash_post_info_level_quota as 
+select  a.*,
+
+b.level_crtTime, b.before_level_early, b.after_level,
+c.quota_crtTime,  c.before_quota_early, c.after_quota,
+/*b.*,*/
+/*c.*,*/
+case when  loan_before_quota_change=1 then  before_quota_early 
+	 when  loan_before_quota_change=0 then  after_quota 
+	 when  missing(loan_before_quota_change) then a.totalquota
+	 else  -9999	end as memberquota_acct_back,
+
+case when  loan_before_level_change=1 then  before_level_early 
+	 when  loan_before_level_change=0 then  after_level 
+	 when  missing(loan_before_level_change) then a.memberlevel
+	 else  -9999 end as memberlevel_acct_back
+
+from cash_post_info_merge as a 
+	left join  Cash_post_info_level_min_ndp as b
+		on a.memberid=b.memberid and a.orderno=b.orderno
+	left join Cash_post_info_quota_min_ndp as c
+		on a.memberid=c.memberid and a.orderno=c.orderno
+
+order by memberid ,loan_day , orderno 
+;
+quit;
+
+proc freq data= Cash_post_info_level_quota   ;
+tables memberlevel_acct_back  /missing;
+
+run;
+
+
+/*  level/quota end    */
+
+/* cash pcl */
+proc sort data= bck.Cash_orderinfo_daily_&tday. out=Cash_orderinfo_daily 
+(keep=memberid orderno   memberlevel membergrade  orderdate 
+rename=(memberlevel=memberlevel_cashpcl  membergrade=membergrade_cashpcl  orderdate=orderdate_cashpcl)
+)		dupout=Cash_orderinfo_daily_dp(keep=memberid orderno   memberlevel membergrade  orderdate 
+rename=(memberlevel=memberlevel_cashpcl  membergrade=membergrade_cashpcl  orderdate=orderdate_cashpcl)
+)		nodupkey	;
+by memberid  orderno ;
+run;
+
+
+proc sql;
+create table  Cash_post_info_&tday. as
+select a.*,
+		b.memberlevel_cashpcl, b.membergrade_cashpcl , substr(b.orderdate_cashpcl,1,10) as orderdate_cashpcl  length=12
+from Cash_post_info_level_quota as a left join  Cash_orderinfo_daily as b
+	on a.memberid=b.memberid and a.orderno=b.orderno
+
+order by memberid , loan_day , orderno , mob;
+;
+quit;
+
+proc freq data=   Cash_post_info_&tday.  ;
+tables  membergrade_cashpcl*memberlevel /missing ;
+run;
+
+
+
+/* fin */
+
+data     dt.Cash_post_info_&tday.	;
+set      Cash_post_info_&tday.    ;
+by   memberid  loan_day   orderno  mob;
+
+length Customer_Pricing_Acct_back $16.   membergrade_cashpcl_lvl $16. ;
+	 
+	if memberlevel_acct_back in(3,11) 		 then  Customer_Pricing_Acct_back= 'A';		
+	else if memberlevel_acct_back in( 7 , 12 )   then  Customer_Pricing_Acct_back= 'B';
+	else if memberlevel_acct_back in( 15 )   then  Customer_Pricing_Acct_back= 'NB';
+	else if memberlevel_acct_back in( 16 , 17 , 27 , 28 , 29 )   then    Customer_Pricing_Acct_back= 'B-';
+	else if memberlevel_acct_back in( 14  ) then  Customer_Pricing_Acct_back= 'C-';
+	else if memberlevel_acct_back in( 13 )  then   Customer_Pricing_Acct_back= 'C';
+	else if memberlevel_acct_back in( 18 )  then   Customer_Pricing_Acct_back= 'PD';
+	else if (memberlevel_acct_back)=0  then   	   Customer_Pricing_Acct_back= 'NANJING_BANK';
+	else if missing(memberlevel_acct_back)  then   Customer_Pricing_Acct_back= 'NONE';
+
+	else if memberlevel_acct_back in(99, 100)   then Customer_Pricing_Acct_back='Imp';
+	else if memberlevel_acct_back=10000    then   Customer_Pricing_Acct_back='Test';
+	else  Customer_Pricing_Acct_back='Other';
+	
+	
+	 
+	if memberlevel_cashpcl in(3,11) 		 then  membergrade_cashpcl_lvl= 'A';		
+	else if memberlevel_cashpcl in( 7 , 12 )   then  membergrade_cashpcl_lvl= 'B';
+	else if memberlevel_cashpcl in( 15 )   then  membergrade_cashpcl_lvl= 'NB';
+	else if memberlevel_cashpcl in( 16 , 17 , 27 , 28 , 29 )   then    membergrade_cashpcl_lvl= 'B-';
+	else if memberlevel_cashpcl in( 14  ) then  membergrade_cashpcl_lvl= 'C-';
+	else if memberlevel_cashpcl in( 13 )  then   membergrade_cashpcl_lvl= 'C';
+	else if memberlevel_cashpcl in( 18 )  then   membergrade_cashpcl_lvl= 'PD';
+	else if (memberlevel_cashpcl)=0  then   	   membergrade_cashpcl_lvl= 'NANJING_BANK';
+	else if missing(memberlevel_cashpcl)  then   membergrade_cashpcl_lvl= 'NONE';
+
+	else if memberlevel_cashpcl in(99, 100)   then membergrade_cashpcl_lvl='Imp';
+	else if memberlevel_cashpcl=10000    then   membergrade_cashpcl_lvl='Test';
+	else  membergrade_cashpcl_lvl='Other';
+
+
+
+	label 
+	Customer_Pricing_Acct='现行定价等级'
+	memberquota_acct_back='回溯当期额度'
+	Customer_Pricing_Acct_back='回溯当期定价等级'
+	
+	
+	before_level_early =  '当天调整前最早等级'
+	after_level=  '当天调整后最终等级'
+
+	before_quota_early='当天调整前最小额度'
+	after_quota='当天调整后最终额度'
+
+	quota_crtTime='额度调整日期'
+	level_crtTime='等级调整日期'
+
+	membergrade_cashpcl='订单时点定价'
+	memberlevel_cashpcl='订单时点定价等级'
+	membergrade_cashpcl_lvl='订单时点定价等级(EN)'
+	;
+	
+	
+drop  dayLoanDiscount deferredFlag  deleted  discountParty  dueLoanAmt  fee
+	initAdvanceFee     initFee            interestStatus  isFree  
+	latefee  loanDiscountfee  acctTempId  payLoanDiscountfee   periodType    poundage    
+ remainAdvanceFee  remainFee  remainLatefee  remainOverdue   remainPrincipal   remainTotalAmt  remittanceType 
+ remittanceType   repayDiscountfee   rotateStatus   successLogicDate  successTime  
+ updTime    uptTime  waiverAdvanceFee       waiverFee     waiverLatefee    waiverOverdue    waiverPoundage     
+ match:
+;	
+	
+run;
+
+/*proc sort data =  dt.cash_post_info_&tday. ;*/
+/*by memberid loan_day orderno mob;*/
+/*run;*/
+
+proc sql;
+title "summary";
+select count(distinct memberid) as member , count(distinct orderno) as orderno
+from  dt.cash_post_info_&tday.
+;
+quit;
+
+
 
 proc freq data=  dt.cash_post_info_&tday.;
-tables match_post;
-tables Customer_Pricing_Acct;
-
+tables Customer_Pricing_Acct*Customer_Pricing_Acct_back /missing;
 run;
 
 

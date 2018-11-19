@@ -1,30 +1,32 @@
 %inc ".\#00.OPTION.SAS";
 
 
- 
+proc freq data=  bt.dm_bt_post_info_&tday.;
+tables   queue/missing norow nocol;
+run;
 
 data bt_table;
-SET bt.bt_post_info_&tday.;
-WHERE channelType ="C001";
+SET bt.dm_bt_post_info_&tday.;
+WHERE channelType ="C005";
+
 
 STATS_DAY= intnx("month",input(UPDATE_DAY,yymmdd8.),-1);
-/* STATS_DAY= intnx("month",input(UPDATE_DAY,yymmdd8.),0);*/
 STATS_MTH= put(STATS_DAY,yymmn6.);
 run;
 
 
-
 %let dlq= 1
 ;
-
-
-
 data BT_VINM1 BT_VINM2 BT_VINM3;
 set bt_table;
 
-if new_dlq_mthend>&dlq. then output BT_VINM1;
-/*else if  mob>=2 and queue="M1-M2" then output BT_VINM2;
-else if  mob>=3 and queue not in ("C","未到期") then output BT_VINM3; */
+if  new_dlq_mthend>=&dlq. then output BT_VINM1;
+/*
+else if  mob>=2 and new_dlq_mthend>=30 then  output BT_VINM2;
+else if   mob>=3 and new_dlq_mthend>=30 then output BT_VINM3;
+
+ mob>=1 and else if  mob>=2 and queue="M1-M2" then output BT_VINM2;
+else if  mob>=3 and queue not in ("C","未到期") then output BT_VINM3;  */
 
 run;
 
@@ -70,7 +72,7 @@ quit;
 
 /*proc sql;*/
 /*create table etst as*/
-/*select distinct memberid, orderno, loanamount,loan_mth, */
+/*select distinct memberid, orderno, loan_amt,loan_mth, */
 /*from dt.bt_dlqdayamt*/
 /*;*/
 /*quit;*/
@@ -78,9 +80,9 @@ quit;
 
 proc sql;
 create table Loan_amt as
-select loan_mth,  sum(loanamount)  as loan_amt format comma15.2
+select loan_mth,  sum(loan_amt)/100  as loan_amt format comma15.2
 from (
-select distinct memberid, orderno, loanamount,loan_mth 
+select distinct memberid, orderno, loan_amt,loan_mth 
 
 from bt_table
 where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH
@@ -135,8 +137,10 @@ order by  loan_mth
 quit;
 
 
-/* 1 only */
 
+
+
+/* only 1 */
 
 %MACRO c ; 
 %LET TABLE= M1 M2 M3								
@@ -155,7 +159,7 @@ run;
 
 data   &mname._table;
  
-retain loan_mth    loan_amt mob1-mob28;
+retain loan_mth    loan_amt mob1-mob25;
 set TPS_&mname.;
 drop _NAME_;
 run;
@@ -163,9 +167,9 @@ run;
 
 
 PROC EXPORT DATA=    &mname._table
-            OUTFILE= ".\EXCEL\&mname._bt&dlq._all.XLSX" 
+            OUTFILE= ".\EXCEL\dm&dlq._all.XLSX" 
             DBMS=EXCEL REPLACE;
-     SHEET="&mname._bt&dlq._all"; 
+     SHEET="DM&dlq._all"; 
 RUN;
 
 

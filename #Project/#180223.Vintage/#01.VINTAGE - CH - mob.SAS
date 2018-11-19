@@ -1,11 +1,9 @@
 %inc ".\#00.OPTION.SAS";
 
 
- 
-
-data bt_table;
-SET bt.bt_post_info_&tday.;
-WHERE channelType ="C001";
+data ch_table;
+/*SET CH.cash_post_info_&tday.;*/
+SET CH.cash_post_info_20181102;
 
 STATS_DAY= intnx("month",input(UPDATE_DAY,yymmdd8.),-1);
 /* STATS_DAY= intnx("month",input(UPDATE_DAY,yymmdd8.),0);*/
@@ -19,8 +17,8 @@ run;
 
 
 
-data BT_VINM1 BT_VINM2 BT_VINM3;
-set bt_table;
+data BT_VINM1  ;
+set ch_table;
 
 if new_dlq_mthend>&dlq. then output BT_VINM1;
 /*else if  mob>=2 and queue="M1-M2" then output BT_VINM2;
@@ -42,47 +40,14 @@ order by loan_mth,mob
 ;
 quit;
 
-proc sql;
-create table BT_VIN_M2 as
-select loan_mth,mob,   
-		sum(due_amt)  as Due_amt_m2 format comma12.2
-
-from BT_VINM2
-where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH
-
-group by loan_mth,mob 
-order by loan_mth,mob
-;
-quit;
-
-proc sql;
-create table BT_VIN_M3 as
-select loan_mth,mob,   
-		sum(due_amt)  as Due_amt_m3 format comma12.2
-
-from BT_VINM3
-where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH
-
-group by loan_mth,mob  
-order by loan_mth,mob
-;
-quit;
-
-/*proc sql;*/
-/*create table etst as*/
-/*select distinct memberid, orderno, loanamount,loan_mth, */
-/*from dt.bt_dlqdayamt*/
-/*;*/
-/*quit;*/
-/**/
 
 proc sql;
 create table Loan_amt as
-select loan_mth,  sum(loanamount)  as loan_amt format comma15.2
+select loan_mth,  sum(loan_amt)/100   as loan_amt format comma20.2
 from (
-select distinct memberid, orderno, loanamount,loan_mth 
+select distinct memberid, orderno, loan_amt,loan_mth 
 
-from bt_table
+from ch_table
 where  loan_mth<STATS_MTH and  PUT(new_repaydate,YYMMN6.)<= STATS_MTH
 )
 
@@ -91,6 +56,7 @@ group by loan_mth
 order by loan_mth
 ;
 quit;
+
 
 /*========================== vintage ========================*/
 
@@ -108,38 +74,11 @@ quit;
 
 
 
-/* M2 */
-proc sql;
-create table M2_VINTAGE AS
-select a.*,
-		b.mob,b.Due_amt_m2,
-		Due_amt_m2/loan_amt as Due_Percent format percent15.2
-
-from loan_amt as a left join Bt_vin_m2 as b on a.loan_mth=b.loan_mth  
-order by   loan_mth
-;
-quit;
-
-
-
-/* M3 */
-proc sql;
-create table M3_VINTAGE AS
-select a.*,
-		b.mob,b.Due_amt_m3,
-		Due_amt_m3/loan_amt as Due_Percent format percent15.2
-
-from loan_amt as a left join Bt_vin_m3 as b on a.loan_mth=b.loan_mth  
-order by  loan_mth
-;
-quit;
-
-
 /* 1 only */
 
 
 %MACRO c ; 
-%LET TABLE= M1 M2 M3								
+%LET TABLE= M1  								
 ;
 
 %do i=1 %to 1;
@@ -163,9 +102,9 @@ run;
 
 
 PROC EXPORT DATA=    &mname._table
-            OUTFILE= ".\EXCEL\&mname._bt&dlq._all.XLSX" 
+            OUTFILE= ".\EXCEL\&mname._ch&dlq._all_chk.XLSX" 
             DBMS=EXCEL REPLACE;
-     SHEET="&mname._bt&dlq._all"; 
+     SHEET="&mname._ch&dlq._all"; 
 RUN;
 
 
