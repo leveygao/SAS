@@ -1,0 +1,17 @@
+data test;
+   length stringx $1000;
+   retain stringx;
+   string='&#12345;zhangsan张三こんにちは123456789,lisi李四?wangwu王五Здравствыйте123456';
+   retain temp1 temp2;
+   if _n_=1 then do;
+      temp_low=input(compress(unicodec(unicode('\u4e00'),'ncr'),,'kd'),best.);
+      temp_up=input(compress(unicodec(unicode('\u9fa5'),'ncr'),,'kd'),best.);
+   end;
+   do i=1 to klength(string);
+      temp1=ksubstr(string,i,1);
+      temp2=input(compress(unicodec(temp1,'ncr'),,'kd'),best.);
+      if temp_low<=temp2<=temp_up then stringx=cats(stringx,temp1);
+   end;
+   stringx=unicode(stringx,'ncr');
+   drop temp: i;
+run;
